@@ -1,0 +1,27 @@
+pub(crate) const ALREADY_STARTED: &str = "ERR_ALREADY_STARTED";
+pub(crate) const MAX_DURATION_TO_START: &str = "ERR_MAX_DURATION_TO_START";
+pub(crate) const MAX_DURATION: &str = "ERR_MAX_DURATION";
+pub(crate) const MIN_DURATION: &str = "ERR_MIN_DURATION";
+pub(crate) const SALE_NOT_FOUND: &str = "ERR_SALE_NOT_FOUND";
+pub(crate) const SALE_ENDED: &str = "ERR_SALE_ENDED";
+pub(crate) const SHARES_OVERFLOW: &str = "ERR_SHARES_OVERFLOW";
+pub(crate) const ACCOUNT_NOT_FOUND: &str = "ERR_ACCOUNT_NOT_FOUND";
+pub(crate) const NOT_ENOUGH_BALANCE: &str = "ERR_NOT_ENOUGH_BALANCE";
+pub(crate) const ZERO_IN_AMOUNT: &str = "ERR_ZERO_IN_AMOUNT";
+pub(crate) const ZERO_OUT_AMOUNT: &str = "ERR_ZERO_OUT_AMOUNT";
+pub(crate) const NOT_ENOUGH_SHARES: &str = "ERR_NOT_ENOUGH_SHARES";
+pub(crate) const ZERO_SHARES: &str = "ERR_ZERO_SHARES";
+pub(crate) const ZERO_SKYWARD: &str = "ERR_ZERO_SKYWARD";
+pub(crate) const ZERO_AMOUNT: &str = "ERR_ZERO_AMOUNT";
+pub(crate) const BALANCE_OVERFLOW: &str = "ERR_BALANCE_OVERFLOW";
+pub(crate) const TOKEN_NOT_REGISTERED: &str = "ERR_TOKEN_NOT_REGISTERED";
+pub(crate) const NOT_ENOUGH_ATTACHED_BALANCE: &str = "ERR_NOT_ENOUGH_ATTACHED_BALANCE";
+pub(crate) const FAILED_TO_PARSE_FT_ON_TRANSFER_MSG: &str =
+    "ERR_FAILED_TO_PARSE_FT_ON_TRANSFER_MSG";
+pub(crate) const NEED_AT_LEAST_ONE_YOCTO: &str = "ERR_NEED_AT_LEAST_ONE_YOCTO";
+pub(crate) const TOKEN_WITHDRAW_FAILED: &str = "ERR_TOKEN_WITHDRAW_FAILED";
+pub(crate) const SAME_TOKENS: &str = "ERR_SAME_TOKENS";
+pub(crate) const TREASURY_CAN_NOT_CONTAIN_SKYWARD: &str = "ERR_TREASURY_CAN_NOT_CONTAIN_SKYWARD";
+pub(crate) const NON_UNIQUE_OUT_TOKENS: &str = "ERR_NON_UNIQUE_OUT_TOKENS";
+pub(crate) const MAX_NUM_OUT_TOKENS: &str = "ERR_MAX_NUM_OUT_TOKENS";
+pub(crate) const TOKEN_NOT_IN_SALE: &str = "ERR_TOKEN_NOT_IN_SALE";
