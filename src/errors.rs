@@ -25,3 +25,4 @@ pub(crate) const TREASURY_CAN_NOT_CONTAIN_SKYWARD: &str = "ERR_TREASURY_CAN_NOT_
 pub(crate) const NON_UNIQUE_OUT_TOKENS: &str = "ERR_NON_UNIQUE_OUT_TOKENS";
 pub(crate) const MAX_NUM_OUT_TOKENS: &str = "ERR_MAX_NUM_OUT_TOKENS";
 pub(crate) const TOKEN_NOT_IN_SALE: &str = "ERR_TOKEN_NOT_IN_SALE";
+pub(crate) const SELF_REFERRAL: &str = "ERR_SELF_REFERRAL";

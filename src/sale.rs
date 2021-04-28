@@ -371,7 +371,10 @@ impl Contract {
         self.accounts.insert(&sale.owner_id, &account.into());
         self.sales.insert(&sale_id, &sale.into());
         self.num_sales += 1;
-        refund_extra_storage_deposit(env::storage_usage() - initial_storage_usage);
+        refund_extra_storage_deposit(
+            env::storage_usage() - initial_storage_usage,
+            self.treasury.listing_fee_near,
+        );
         self.get_sale(sale_id, None).unwrap()
     }
 
@@ -404,7 +407,7 @@ impl Contract {
                 .expect(errors::BALANCE_OVERFLOW);
         }
         self.sales.insert(&sale_id, &sale.into());
-        refund_extra_storage_deposit(env::storage_usage() - initial_storage_usage);
+        refund_extra_storage_deposit(env::storage_usage() - initial_storage_usage, 0);
     }
 
     pub fn get_sale(&self, sale_id: u64, account_id: Option<ValidAccountId>) -> Option<SaleOutput> {
@@ -429,12 +432,22 @@ impl Contract {
     }
 
     #[payable]
-    pub fn sale_deposit_in_token(&mut self, sale_id: u64, amount: WrappedBalance) {
+    pub fn sale_deposit_in_token(
+        &mut self,
+        sale_id: u64,
+        amount: WrappedBalance,
+        referral_id: Option<ValidAccountId>,
+    ) {
         assert_at_least_one_yocto();
         let initial_storage_usage = env::storage_usage();
         let account_id = env::predecessor_account_id();
-        self.internal_deposit_in_amount(sale_id, &account_id, amount.0);
-        refund_extra_storage_deposit(env::storage_usage() - initial_storage_usage);
+        self.internal_deposit_in_amount(
+            sale_id,
+            &account_id,
+            amount.0,
+            referral_id.map(|r| r.into()).as_ref(),
+        );
+        refund_extra_storage_deposit(env::storage_usage() - initial_storage_usage, 0);
     }
 
     #[payable]
@@ -459,7 +472,8 @@ impl Contract {
         let mut sale = self.internal_unwrap_sale(sale_id);
         self.internal_distribute_unclaimed_tokens(&mut sale);
         let mut account = self.internal_unwrap_account(&account_id);
-        let subscription = account.internal_update_subscription(sale_id, &mut sale);
+        let subscription =
+            self.internal_update_subscription(&mut account, sale_id, &mut sale, None);
 
         account.internal_save_subscription(sale_id, subscription);
 

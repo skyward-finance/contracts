@@ -19,9 +19,11 @@ uint::construct_uint! {
     pub struct U384(6);
 }
 
-pub(crate) fn refund_extra_storage_deposit(storage_used: StorageUsage) {
+pub(crate) fn refund_extra_storage_deposit(storage_used: StorageUsage, used_balance: Balance) {
     let required_cost = env::storage_byte_cost() * Balance::from(storage_used);
-    let attached_deposit = env::attached_deposit();
+    let attached_deposit = env::attached_deposit()
+        .checked_sub(used_balance)
+        .expect(errors::NOT_ENOUGH_ATTACHED_BALANCE);
 
     assert!(
         required_cost <= attached_deposit,

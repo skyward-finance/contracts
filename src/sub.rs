@@ -5,6 +5,7 @@ use near_sdk::json_types::WrappedBalance;
 pub struct Subscription {
     pub shares: Balance,
     pub last_out_token_per_share: Vec<InnerU256>,
+    pub referral_id: Option<AccountId>,
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -66,7 +67,8 @@ impl Contract {
     ) {
         let mut sale = self.internal_unwrap_sale(sale_id);
         let mut account = self.internal_unwrap_account(account_id);
-        let mut subscription = account.internal_update_subscription(sale_id, &mut sale);
+        let mut subscription =
+            self.internal_update_subscription(&mut account, sale_id, &mut sale, None);
         let shares = shares.unwrap_or(subscription.shares);
         assert!(shares > 0, "{}", errors::ZERO_SHARES);
         assert!(
@@ -92,10 +94,13 @@ impl Contract {
         sale_id: u64,
         account_id: &AccountId,
         in_amount: Balance,
+        referral_id: Option<&AccountId>,
     ) {
+        assert_ne!(referral_id, Some(account_id), "{}", errors::SELF_REFERRAL);
         let mut sale = self.internal_unwrap_sale(sale_id);
         let mut account = self.internal_unwrap_account(account_id);
-        let mut subscription = account.internal_update_subscription(sale_id, &mut sale);
+        let mut subscription =
+            self.internal_update_subscription(&mut account, sale_id, &mut sale, referral_id);
         assert!(in_amount > 0, "{}", errors::ZERO_IN_AMOUNT);
 
         account.internal_token_withdraw(&sale.in_token_account_id, in_amount);

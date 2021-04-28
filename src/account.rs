@@ -4,6 +4,8 @@ use near_sdk::collections::{UnorderedMap, UnorderedSet};
 use near_sdk::json_types::{WrappedBalance, U128};
 use near_sdk::{assert_one_yocto, serde_json, PromiseOrValue};
 
+const REFERRAL_FEE_DENOMINATOR: Balance = 100;
+
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct Account {
     pub balances: UnorderedMap<TokenAccountId, Balance>,
@@ -55,6 +57,7 @@ impl Account {
         &self,
         sale_id: u64,
         sale: &Sale,
+        referral_id: Option<&AccountId>,
     ) -> (Subscription, Vec<Balance>) {
         let mut subscription: Subscription = self
             .subs
@@ -67,24 +70,10 @@ impl Account {
                     .iter()
                     .map(|out_token| out_token.per_share.clone())
                     .collect(),
+                referral_id: referral_id.cloned(),
             });
         let out_token_amounts = subscription.touch(sale);
         (subscription, out_token_amounts)
-    }
-
-    pub fn internal_update_subscription(&mut self, sale_id: u64, sale: &mut Sale) -> Subscription {
-        let (mut subscription, out_token_amounts) = self.internal_get_subscription(sale_id, &sale);
-        for (amount, out_token) in out_token_amounts.into_iter().zip(sale.out_tokens.iter()) {
-            if amount > 0 {
-                self.internal_token_deposit(&out_token.token_account_id, amount);
-            }
-        }
-        let remaining_in_amount = sale.shares_to_in_balance(subscription.shares);
-        if remaining_in_amount == 0 && subscription.shares > 0 {
-            sale.total_shares -= subscription.shares;
-            subscription.shares = 0;
-        }
-        subscription
     }
 
     pub fn internal_save_subscription(&mut self, sale_id: u64, subscription: Subscription) {
@@ -100,7 +89,8 @@ impl Account {
         sale_id: u64,
         sale: &Sale,
     ) -> Option<SubscriptionOutput> {
-        let (subscription, out_token_remaining) = self.internal_get_subscription(sale_id, sale);
+        let (subscription, out_token_remaining) =
+            self.internal_get_subscription(sale_id, sale, None);
         if subscription.shares > 0 {
             Some(SubscriptionOutput {
                 remaining_in_balance: sale.shares_to_in_balance(subscription.shares).into(),
@@ -132,6 +122,52 @@ impl Contract {
                 self.treasury.internal_deposit(token_account_id, 0);
             }
         }
+    }
+
+    pub fn internal_update_subscription(
+        &mut self,
+        account: &mut Account,
+        sale_id: u64,
+        sale: &mut Sale,
+        referral_id: Option<&AccountId>,
+    ) -> Subscription {
+        let (mut subscription, out_token_amounts) =
+            account.internal_get_subscription(sale_id, &sale, referral_id);
+        for (mut amount, out_token) in out_token_amounts.into_iter().zip(sale.out_tokens.iter()) {
+            if amount > 0 {
+                if &out_token.token_account_id == &self.treasury.skyward_token_id {
+                    // Skyward token that will be used for referral.
+                    let mut ref_amount = amount / REFERRAL_FEE_DENOMINATOR;
+                    if ref_amount > 0 {
+                        if let Some(referral_id) = &subscription.referral_id {
+                            if let Some(referral) = self.accounts.get(referral_id) {
+                                let mut referral: Account = referral.into();
+                                if referral.balances.get(&out_token.token_account_id).is_some() {
+                                    referral.internal_token_deposit(
+                                        &out_token.token_account_id,
+                                        ref_amount,
+                                    );
+                                    ref_amount = 0;
+                                    self.accounts.insert(referral_id, &referral.into());
+                                }
+                            }
+                        }
+                        if ref_amount > 0 {
+                            // Invalid referral_id. Burning instead
+                            self.treasury.skyward_total_supply -= ref_amount;
+                        }
+                        amount -= ref_amount;
+                    }
+                }
+                account.internal_token_deposit(&out_token.token_account_id, amount);
+            }
+        }
+        let remaining_in_amount = sale.shares_to_in_balance(subscription.shares);
+        if remaining_in_amount == 0 && subscription.shares > 0 {
+            sale.total_shares -= subscription.shares;
+            subscription.shares = 0;
+        }
+        subscription
     }
 }
 
@@ -176,7 +212,7 @@ impl Contract {
             self.internal_maybe_register_token(&mut account, token_account_id.as_ref());
         }
         self.accounts.insert(&account_id, &account.into());
-        refund_extra_storage_deposit(env::storage_usage() - initial_storage_usage);
+        refund_extra_storage_deposit(env::storage_usage() - initial_storage_usage, 0);
     }
 
     #[payable]

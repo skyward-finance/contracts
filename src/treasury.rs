@@ -8,14 +8,21 @@ pub struct Treasury {
     pub balances: UnorderedMap<TokenAccountId, Balance>,
     pub skyward_token_id: TokenAccountId,
     pub skyward_total_supply: Balance,
+
+    pub listing_fee_near: Balance,
 }
 
 impl Treasury {
-    pub fn new(skyward_token_id: TokenAccountId, skyward_total_supply: Balance) -> Self {
+    pub fn new(
+        skyward_token_id: TokenAccountId,
+        skyward_total_supply: Balance,
+        listing_fee_near: Balance,
+    ) -> Self {
         Self {
             balances: UnorderedMap::new(StorageKey::TreasuryBalances),
             skyward_token_id,
             skyward_total_supply,
+            listing_fee_near,
         }
     }
 
@@ -70,6 +77,10 @@ impl Contract {
 
     pub fn get_skyward_total_supply(&self) -> WrappedBalance {
         self.treasury.skyward_total_supply.into()
+    }
+
+    pub fn get_listing_fee(&self) -> WrappedBalance {
+        self.treasury.listing_fee_near.into()
     }
 
     #[payable]
