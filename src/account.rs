@@ -139,6 +139,7 @@ impl Contract {
                     // Skyward token that will be used for referral.
                     let mut ref_amount = amount / REFERRAL_FEE_DENOMINATOR;
                     if ref_amount > 0 {
+                        amount -= ref_amount;
                         if let Some(referral_id) = &subscription.referral_id {
                             if let Some(referral) = self.accounts.get(referral_id) {
                                 let mut referral: Account = referral.into();
@@ -156,7 +157,6 @@ impl Contract {
                             // Invalid referral_id. Burning instead
                             self.treasury.skyward_total_supply -= ref_amount;
                         }
-                        amount -= ref_amount;
                     }
                 }
                 account.internal_token_deposit(&out_token.token_account_id, amount);
@@ -242,7 +242,7 @@ impl Contract {
             .internal_deposit(token_account_id.as_ref(), amount.0);
     }
 
-    pub fn get_balance(
+    pub fn balance_of(
         &self,
         account_id: ValidAccountId,
         token_account_id: ValidAccountId,
@@ -256,12 +256,12 @@ impl Contract {
         })
     }
 
-    pub fn get_balances(
+    pub fn balances_of(
         &self,
         account_id: ValidAccountId,
         from_index: Option<u64>,
         limit: Option<u64>,
-    ) -> Vec<(AccountId, WrappedBalance)> {
+    ) -> Vec<(TokenAccountId, WrappedBalance)> {
         if let Some(account) = self.accounts.get(account_id.as_ref()) {
             let account: Account = account.into();
             let keys = account.balances.keys_as_vector();

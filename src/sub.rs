@@ -29,6 +29,7 @@ impl From<VSubscription> for Subscription {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct SubscriptionOutput {
     pub remaining_in_balance: WrappedBalance,
     pub unclaimed_out_balances: Vec<WrappedBalance>,

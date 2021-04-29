@@ -7,7 +7,7 @@ const MAX_DURATION: Duration = 4 * 366 * 24 * 60 * 60 * 1_000_000_000;
 /// Minimum duration. Use 1 nanosecond to run a simple auction.
 const MIN_DURATION: Duration = 1;
 
-pub(crate) const MULTIPLIER: u128 = u128::MAX;
+pub(crate) const MULTIPLIER: u128 = 10u128.pow(38);
 pub(crate) const TREASURY_FEE_DENOMINATOR: Balance = 100;
 pub(crate) const MAX_NUM_OUT_TOKENS: usize = 4;
 
@@ -72,8 +72,8 @@ pub struct SaleInput {
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct SaleInputOutToken {
-    token_account_id: ValidAccountId,
-    balance: WrappedBalance,
+    pub token_account_id: ValidAccountId,
+    pub balance: WrappedBalance,
 }
 
 impl SaleOutToken {
@@ -83,7 +83,7 @@ impl SaleOutToken {
             token_account_id: token.token_account_id.into(),
             remaining: token.balance.into(),
             distributed: 0,
-            treasury_unclaimed: if is_skyward_token { Some(0) } else { None },
+            treasury_unclaimed: if is_skyward_token { None } else { Some(0) },
             per_share: U256::zero().0,
         }
     }
@@ -91,6 +91,7 @@ impl SaleOutToken {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct SaleOutput {
     pub sale_id: u64,
     pub owner_id: AccountId,
@@ -113,6 +114,7 @@ pub struct SaleOutput {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct SaleOutputOutToken {
     pub token_account_id: TokenAccountId,
     pub remaining: WrappedBalance,
@@ -349,7 +351,7 @@ impl Contract {
 #[near_bindgen]
 impl Contract {
     #[payable]
-    pub fn sale_create(&mut self, sale: SaleInput) -> SaleOutput {
+    pub fn sale_create(&mut self, sale: SaleInput) -> u64 {
         let initial_storage_usage = env::storage_usage();
         let sale_id = self.num_sales;
         let mut sale = Sale::from_input(
@@ -375,7 +377,7 @@ impl Contract {
             env::storage_usage() - initial_storage_usage,
             self.treasury.listing_fee_near,
         );
-        self.get_sale(sale_id, None).unwrap()
+        sale_id
     }
 
     #[payable]
