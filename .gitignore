@@ -1,4 +1,4 @@
-/target
+target/
 
-neardev
-/res/
+neardev/
+res/

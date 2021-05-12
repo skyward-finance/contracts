@@ -4,7 +4,9 @@
 ./build.sh
 near dev-deploy res/skyward.was
 export CONTRACT_ID=skyward.testnet
-near call $CONTRACT_ID new --account_id=$CONTRACT_ID
+export SKYWARD_TOKEN_ID=token.skyward.testnet
+
+near call $CONTRACT_ID --accountId=$CONTRACT_ID new '{"skyward_token_id": "'$SKYWARD_TOKEN_ID'", "skyward_total_supply": "1000000000000000000000000", "listing_fee_near": "10000000000000000000000000"}'
 ```
 
 ## Register tokens for ACCOUNT_ID

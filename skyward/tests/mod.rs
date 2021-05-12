@@ -15,8 +15,8 @@ use std::convert::TryInto;
 near_sdk_sim::lazy_static_include::lazy_static_include_bytes! {
     SKYWARD_WASM_BYTES => "res/skyward.wasm",
 
-    FUNGIBLE_TOKEN_WASM_BYTES => "tests/res/fungible_token.wasm",
-    W_NEAR_WASM_BYTES => "tests/res/w_near.wasm",
+    FUNGIBLE_TOKEN_WASM_BYTES => "../common/fungible_token.wasm",
+    W_NEAR_WASM_BYTES => "../common/w_near.wasm",
 }
 
 const NEAR: &str = "near";
