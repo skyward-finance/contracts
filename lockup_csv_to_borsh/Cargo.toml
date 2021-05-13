@@ -1,0 +1,11 @@
+[package]
+name = "lockup_csv_to_borsh"
+version = "0.1.0"
+authors = ["Spensa Nightshade <dev@skyward.finance>"]
+edition = "2018"
+
+[dependencies]
+csv = "1.1.6"
+borsh = "0.9.0"
+near-sdk = "3.1.0"
+chrono = "0.4"

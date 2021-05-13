@@ -42,6 +42,14 @@ impl Treasury {
             .expect(errors::NOT_ENOUGH_BALANCE);
         self.balances.insert(&token_account_id, &new_balance);
     }
+
+    pub fn internal_donate(&mut self, token_account_id: &AccountId, amount: Balance) {
+        if token_account_id == &self.skyward_token_id {
+            self.skyward_total_supply -= amount;
+        } else {
+            self.internal_deposit(token_account_id, amount);
+        }
+    }
 }
 
 #[near_bindgen]

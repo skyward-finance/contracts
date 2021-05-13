@@ -7,6 +7,7 @@ use near_sdk::json_types::WrappedBalance;
 #[serde(crate = "near_sdk::serde")]
 pub enum FtOnTransferArgs {
     AccountDeposit,
+    DonateToTreasury,
 }
 
 #[ext_contract(ext_self)]

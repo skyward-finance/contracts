@@ -239,7 +239,7 @@ impl Contract {
         let mut account = self.internal_unwrap_account(&account_id);
         account.internal_token_withdraw(token_account_id.as_ref(), amount.0);
         self.treasury
-            .internal_deposit(token_account_id.as_ref(), amount.0);
+            .internal_donate(token_account_id.as_ref(), amount.0);
     }
 
     pub fn balance_of(
@@ -346,8 +346,18 @@ impl FungibleTokenReceiver for Contract {
             FtOnTransferArgs::AccountDeposit => {
                 let mut account = self.internal_unwrap_account(sender_id.as_ref());
                 account.internal_token_deposit(&token_account_id, amount.0);
-                PromiseOrValue::Value(0.into())
+            }
+            FtOnTransferArgs::DonateToTreasury => {
+                let initial_storage_usage = env::storage_usage();
+                self.treasury.internal_donate(&token_account_id, amount.0);
+                assert_eq!(
+                    initial_storage_usage,
+                    env::storage_usage(),
+                    "{}",
+                    errors::UNREGISTERED_TREASURY_TOKEN
+                );
             }
         }
+        PromiseOrValue::Value(0.into())
     }
 }
