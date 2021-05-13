@@ -428,7 +428,6 @@ fn test_miss_claim() {
     assert!(claim_end_balance < claim_initial_balance);
     assert!(skyward_initial_balance < skyward_end_balance);
     let claim_balance_diff = claim_initial_balance - claim_end_balance;
-    println!("{}", claim_balance_diff);
     let skyward_balance_diff = skyward_end_balance - skyward_initial_balance;
     let gas_contract_reward_eps = to_yocto("0.001");
     assert!(claim_balance_diff > to_yocto("5"));

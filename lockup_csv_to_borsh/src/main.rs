@@ -3,6 +3,7 @@ use near_sdk::borsh::{self, BorshSerialize};
 use near_sdk::json_types::ValidAccountId;
 use near_sdk::serde::Deserialize;
 use near_sdk::AccountId;
+use std::collections::HashSet;
 use std::env;
 use std::fs::File;
 use std::io::Write;
@@ -59,6 +60,7 @@ pub fn main() {
     let mut data = vec![];
     let mut min_start_timestamp = u32::MAX;
     let mut max_end_timestamp = 0;
+    let mut unique_accounts = HashSet::new();
     for result in rdr.deserialize() {
         let Record {
             account_id,
@@ -80,6 +82,7 @@ pub fn main() {
         let account_len = account_id_str.len() as u8;
         let mut account_id = [0u8; 64];
         account_id[..account_id_str.len()].copy_from_slice(account_id_str.as_bytes());
+        assert!(unique_accounts.insert(account_id_str));
         let balance = balance
             .checked_mul(balance_multiplier)
             .expect("Balance multiplication overflow");

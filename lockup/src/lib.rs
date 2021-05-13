@@ -24,6 +24,9 @@ const LOCKUP_DATA: &[u8] = include_bytes!("../data/accounts.borsh");
 const SIZE_OF_FIXED_SIZE_ACCOUNT: usize = 93;
 const NUM_LOCKUP_ACCOUNTS: usize = LOCKUP_DATA.len() / SIZE_OF_FIXED_SIZE_ACCOUNT;
 
+const MAX_STORAGE_PER_ACCOUNT: u64 = 137;
+const SELF_STORAGE: u64 = 1000;
+
 const ONE_YOCTO: Balance = 1;
 
 uint::construct_uint! {
@@ -96,6 +99,12 @@ impl Contract {
         total_balance: WrappedBalance,
     ) -> Self {
         let total_balance = total_balance.into();
+        let required_storage_cost = Balance::from(
+            env::storage_usage()
+                + SELF_STORAGE
+                + MAX_STORAGE_PER_ACCOUNT * (NUM_LOCKUP_ACCOUNTS as u64),
+        ) * env::storage_byte_cost();
+        assert!(env::account_balance() >= required_storage_cost);
         Self {
             accounts: LookupMap::new(StorageKey::Accounts),
             token_account_id: token_account_id.into(),
@@ -119,7 +128,7 @@ impl Contract {
         let account_id = env::predecessor_account_id();
         let mut account = self
             .internal_get_accounts(&account_id, lockup_index)
-            .expect("The claim not founds");
+            .expect("The claim is not found");
         let current_timestamp = env::block_timestamp();
         let unlocked_balance: Balance = if current_timestamp < to_nano(account.cliff_timestamp) {
             0
