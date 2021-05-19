@@ -17,7 +17,9 @@ trait SelfCallbacks {
         account_id: AccountId,
         token_account_id: AccountId,
         amount: WrappedBalance,
-    );
+    ) -> bool;
+
+    fn after_near_deposit(&mut self, amount: WrappedBalance) -> bool;
 }
 
 trait SelfCallbacks {
@@ -26,7 +28,9 @@ trait SelfCallbacks {
         account_id: AccountId,
         token_account_id: AccountId,
         amount: WrappedBalance,
-    );
+    ) -> bool;
+
+    fn after_near_deposit(&mut self, amount: WrappedBalance) -> bool;
 }
 
 impl Contract {
@@ -63,7 +67,8 @@ impl SelfCallbacks for Contract {
         account_id: AccountId,
         token_account_id: AccountId,
         amount: WrappedBalance,
-    ) {
+    ) -> bool {
+        let promise_success = is_promise_success();
         if !is_promise_success() {
             log!(
                 "{} by {} token {} amount {}",
@@ -75,5 +80,20 @@ impl SelfCallbacks for Contract {
             let mut account = self.internal_unwrap_account(&account_id);
             account.internal_token_deposit(&token_account_id, amount.0);
         }
+        promise_success
+    }
+
+    #[private]
+    fn after_near_deposit(&mut self, amount: WrappedBalance) -> bool {
+        let promise_success = is_promise_success();
+        if promise_success {
+            log!(
+                "Successfully wrapped {} NEAR tokens into Treasury",
+                amount.0,
+            );
+            let w_near_token_id = self.treasury.w_near_token_id.clone();
+            self.treasury.internal_deposit(&w_near_token_id, amount.0);
+        }
+        promise_success
     }
 }

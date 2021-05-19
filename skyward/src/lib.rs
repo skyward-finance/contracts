@@ -53,6 +53,7 @@ impl Contract {
         skyward_token_id: ValidAccountId,
         skyward_total_supply: WrappedBalance,
         listing_fee_near: WrappedBalance,
+        w_near_token_id: ValidAccountId,
     ) -> Self {
         Self {
             accounts: LookupMap::new(StorageKey::Accounts),
@@ -62,6 +63,7 @@ impl Contract {
                 skyward_token_id.into(),
                 skyward_total_supply.0,
                 listing_fee_near.0,
+                w_near_token_id.into(),
             ),
         }
     }

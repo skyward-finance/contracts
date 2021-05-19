@@ -3,10 +3,20 @@ use near_sdk::Gas;
 
 pub(crate) const NO_DEPOSIT: Balance = 0;
 pub(crate) const ONE_YOCTO: Balance = 1;
+pub(crate) const ONE_NEAR: Balance = 10u128.pow(24);
 
 const BASE_GAS: Gas = 5_000_000_000_000;
 pub(crate) const FT_TRANSFER_GAS: Gas = BASE_GAS;
 pub(crate) const AFTER_FT_TRANSFER_GAS: Gas = BASE_GAS;
+
+pub(crate) const STORAGE_DEPOSIT: Balance = 125 * env::STORAGE_PRICE_PER_BYTE;
+pub(crate) const STORAGE_DEPOSIT_GAS: Gas = BASE_GAS * 2;
+pub(crate) const NEAR_DEPOSIT_GAS: Gas = BASE_GAS;
+// 1 NEAR
+pub(crate) const EXTRA_NEAR_FOR_STORAGE: Balance = 1000 * env::STORAGE_PRICE_PER_BYTE;
+pub(crate) const EXTRA_NEAR: Balance = EXTRA_NEAR_FOR_STORAGE + STORAGE_DEPOSIT;
+pub(crate) const MIN_EXTRA_NEAR: Balance = EXTRA_NEAR + ONE_NEAR;
+pub(crate) const AFTER_NEAR_DEPOSIT_GAS: Gas = BASE_GAS;
 
 uint::construct_uint! {
     pub struct U256(4);

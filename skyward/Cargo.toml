@@ -13,7 +13,7 @@ near-contract-standards = "3.1.0"
 uint = { version = "0.9.0", default-features = false }
 
 [dev-dependencies]
-near-sdk-sim = "3.1.0"
+near-sdk-sim = "3.2.0"
 
 [profile.release]
 codegen-units=1

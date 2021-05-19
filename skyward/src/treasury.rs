@@ -10,6 +10,8 @@ pub struct Treasury {
     pub skyward_total_supply: Balance,
 
     pub listing_fee_near: Balance,
+
+    pub w_near_token_id: TokenAccountId,
 }
 
 impl Treasury {
@@ -17,12 +19,15 @@ impl Treasury {
         skyward_token_id: TokenAccountId,
         skyward_total_supply: Balance,
         listing_fee_near: Balance,
+        w_near_token_id: TokenAccountId,
     ) -> Self {
+        assert_ne!(skyward_token_id, w_near_token_id);
         Self {
             balances: UnorderedMap::new(StorageKey::TreasuryBalances),
             skyward_token_id,
             skyward_total_supply,
             listing_fee_near,
+            w_near_token_id,
         }
     }
 
@@ -124,5 +129,35 @@ impl Contract {
             }
         }
         self.accounts.insert(&account_id, &account.into());
+    }
+
+    pub fn wrap_extra_near(&mut self) -> Promise {
+        let unused_near_balance =
+            env::account_balance() - Balance::from(env::storage_usage()) * env::storage_byte_cost();
+        assert!(
+            unused_near_balance > MIN_EXTRA_NEAR,
+            "{}",
+            errors::NOT_ENOUGH_BALANCE
+        );
+        let extra_near = unused_near_balance - EXTRA_NEAR;
+        Promise::new(self.treasury.w_near_token_id.clone())
+            .function_call(
+                b"storage_deposit".to_vec(),
+                b"{}".to_vec(),
+                STORAGE_DEPOSIT,
+                STORAGE_DEPOSIT_GAS,
+            )
+            .function_call(
+                b"near_deposit".to_vec(),
+                b"{}".to_vec(),
+                extra_near,
+                NEAR_DEPOSIT_GAS,
+            )
+            .then(ext_self::after_near_deposit(
+                extra_near.into(),
+                &env::current_account_id(),
+                NO_DEPOSIT,
+                AFTER_NEAR_DEPOSIT_GAS,
+            ))
     }
 }

@@ -1650,9 +1650,9 @@ dependencies = [
 
 [[package]]
 name = "near-sdk-sim"
-version = "3.1.0"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdedcf70a6bf5b7d9062e2ebd3dbd80955d062f63b8da7a5d81e77e685fbbc89"
+checksum = "6f9be539455733f5cff63febaee07dcdc48c0a9940856257a1989e84a5552d7a"
 dependencies = [
  "funty",
  "lazy-static-include",
