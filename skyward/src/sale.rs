@@ -9,6 +9,7 @@ const MIN_DURATION: Duration = 1;
 
 pub(crate) const MULTIPLIER: u128 = 10u128.pow(38);
 pub(crate) const TREASURY_FEE_DENOMINATOR: Balance = 100;
+pub(crate) const IN_SKYWARD_DENOMINATOR: Balance = 10;
 pub(crate) const MAX_NUM_OUT_TOKENS: usize = 4;
 
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -28,9 +29,11 @@ pub struct Sale {
 
     pub total_shares: Balance,
     pub last_timestamp: Timestamp,
+
+    pub associated_sale_id: Option<u64>,
 }
 
-#[derive(BorshSerialize, BorshDeserialize)]
+#[derive(BorshSerialize, BorshDeserialize, Clone)]
 pub struct SaleOutToken {
     pub token_account_id: TokenAccountId,
     pub remaining: Balance,
@@ -108,6 +111,8 @@ pub struct SaleOutput {
     pub start_time: WrappedTimestamp,
     pub duration: WrappedDuration,
     pub remaining_duration: WrappedDuration,
+
+    pub associated_sale_id: Option<u64>,
 
     pub subscription: Option<SubscriptionOutput>,
 }
@@ -234,6 +239,45 @@ impl Sale {
             start_time,
             duration: sale.duration.into(),
             last_timestamp: start_time,
+            associated_sale_id: None,
+        }
+    }
+
+    pub fn spawn_in_skyward_sale(
+        &mut self,
+        sale_id: u64,
+        skyward_token_id: &TokenAccountId,
+    ) -> Option<Self> {
+        if &self.in_token_account_id == skyward_token_id {
+            return None;
+        }
+        let mut out_tokens = Vec::with_capacity(self.out_tokens.len());
+        for out_token in &mut self.out_tokens {
+            if &out_token.token_account_id == skyward_token_id {
+                continue;
+            }
+            let mut new_out_token = out_token.clone();
+            let in_skyward_balance = out_token.remaining / IN_SKYWARD_DENOMINATOR;
+            out_token.remaining -= in_skyward_balance;
+            new_out_token.remaining = in_skyward_balance;
+            out_tokens.push(new_out_token);
+        }
+        if out_tokens.is_empty() {
+            None
+        } else {
+            Some(Sale {
+                owner_id: self.owner_id.clone(),
+                out_tokens,
+                in_token_account_id: skyward_token_id.clone(),
+                in_token_remaining: 0,
+                in_token_paid_unclaimed: 0,
+                in_token_paid: 0,
+                start_time: self.start_time,
+                duration: self.duration,
+                total_shares: 0,
+                last_timestamp: self.last_timestamp,
+                associated_sale_id: Some(sale_id),
+            })
         }
     }
 
@@ -253,6 +297,7 @@ impl Sale {
             start_time: self.start_time.into(),
             duration: self.duration.into(),
             remaining_duration: remaining_duration.into(),
+            associated_sale_id: self.associated_sale_id,
             subscription,
         }
     }
@@ -289,24 +334,6 @@ impl Sale {
     pub fn has_ended(&self) -> bool {
         self.last_timestamp >= self.start_time + self.duration
     }
-
-    pub fn ensure_skyward_token_present(&mut self, skyward_token_id: &TokenAccountId) {
-        if &self.in_token_account_id != skyward_token_id
-            && self
-                .out_tokens
-                .iter()
-                .find(|o| &o.token_account_id == skyward_token_id)
-                .is_none()
-        {
-            self.out_tokens.push(SaleOutToken {
-                token_account_id: skyward_token_id.clone(),
-                remaining: 0,
-                distributed: 0,
-                treasury_unclaimed: None,
-                per_share: U256::zero().0,
-            })
-        }
-    }
 }
 
 impl Contract {
@@ -325,16 +352,25 @@ impl Contract {
     }
 
     pub fn internal_distribute_unclaimed_tokens(&mut self, sale: &mut Sale) {
-        let mut account = self.internal_unwrap_account(&sale.owner_id);
         if sale.in_token_paid_unclaimed > 0 {
-            if &sale.in_token_account_id != &self.treasury.skyward_token_id {
-                let treasury_fee = sale.in_token_paid_unclaimed / TREASURY_FEE_DENOMINATOR;
+            if &sale.owner_id == &env::current_account_id() {
+                // Skyward Sale
                 self.treasury
-                    .internal_deposit(&sale.in_token_account_id, treasury_fee);
-                sale.in_token_paid_unclaimed -= treasury_fee;
+                    .internal_donate(&sale.in_token_account_id, sale.in_token_paid_unclaimed);
+            } else {
+                let mut account = self.internal_unwrap_account(&sale.owner_id);
+                if &sale.in_token_account_id != &self.treasury.skyward_token_id {
+                    let treasury_fee = sale.in_token_paid_unclaimed / TREASURY_FEE_DENOMINATOR;
+                    self.treasury
+                        .internal_deposit(&sale.in_token_account_id, treasury_fee);
+                    sale.in_token_paid_unclaimed -= treasury_fee;
+                }
+                account.internal_token_deposit(
+                    &sale.in_token_account_id,
+                    sale.in_token_paid_unclaimed,
+                );
+                self.accounts.insert(&sale.owner_id, &account.into());
             }
-            account.internal_token_deposit(&sale.in_token_account_id, sale.in_token_paid_unclaimed);
-            self.accounts.insert(&sale.owner_id, &account.into());
 
             sale.in_token_paid_unclaimed = 0;
         }
@@ -360,56 +396,63 @@ impl Contract {
             &self.treasury.skyward_token_id,
         );
         sale.assert_valid_not_started();
-        sale.ensure_skyward_token_present(&self.treasury.skyward_token_id);
 
-        let mut account = self.internal_unwrap_account(&sale.owner_id);
-        for out_token in &sale.out_tokens {
-            if out_token.remaining > 0 {
-                account.internal_token_withdraw(&out_token.token_account_id, out_token.remaining);
+        if &sale.owner_id == &env::current_account_id() {
+            // Skyward Sale
+            assert_eq!(
+                sale.out_tokens.len(),
+                1,
+                "{}",
+                errors::INVALID_INITIAL_SKYWARD_SALE
+            );
+            assert_eq!(
+                &sale.out_tokens[0].token_account_id,
+                &self.treasury.skyward_token_id,
+                "{}",
+                errors::INVALID_INITIAL_SKYWARD_SALE
+            );
+            // Registering IN token into the treasury
+            self.treasury.internal_deposit(&sale.in_token_account_id, 0);
+            self.sales.insert(&sale_id, &sale.into());
+            self.num_sales += 1;
+        } else {
+            let mut account = self.internal_unwrap_account(&sale.owner_id);
+            for out_token in &sale.out_tokens {
+                if out_token.remaining > 0 {
+                    account
+                        .internal_token_withdraw(&out_token.token_account_id, out_token.remaining);
+                }
             }
-        }
-        self.internal_maybe_register_token(&mut account, &sale.in_token_account_id);
-        account.sales.insert(&sale_id);
-        self.accounts.insert(&sale.owner_id, &account.into());
-        self.sales.insert(&sale_id, &sale.into());
-        self.num_sales += 1;
-        refund_extra_storage_deposit(
-            env::storage_usage() - initial_storage_usage,
-            self.treasury.listing_fee_near,
-        );
-        sale_id
-    }
+            self.internal_maybe_register_token(&mut account, &sale.in_token_account_id);
+            account.sales.insert(&sale_id);
 
-    #[payable]
-    pub fn sale_deposit_out_token(
-        &mut self,
-        sale_id: u64,
-        token_account_id: ValidAccountId,
-        amount: WrappedBalance,
-    ) {
-        assert_at_least_one_yocto();
-        let amount: Balance = amount.into();
-        assert!(amount > 0, "{}", errors::ZERO_AMOUNT);
-        let initial_storage_usage = env::storage_usage();
-        let mut sale = self.internal_unwrap_sale(sale_id);
-        assert!(!sale.has_ended(), "{}", errors::SALE_ENDED);
-        let account_id = env::predecessor_account_id();
-        let mut account = self.internal_unwrap_account(&account_id);
-        account.internal_token_withdraw(token_account_id.as_ref(), amount);
-        self.accounts.insert(&account_id, &account.into());
-        {
-            let out_token = sale
-                .out_tokens
-                .iter_mut()
-                .find(|out_token| &out_token.token_account_id == token_account_id.as_ref())
-                .expect(errors::TOKEN_NOT_IN_SALE);
-            out_token.remaining = out_token
-                .remaining
-                .checked_add(amount)
-                .expect(errors::BALANCE_OVERFLOW);
+            // Creating 10% SKYWARD sale
+            if let Some(in_skyward_sale) =
+                sale.spawn_in_skyward_sale(sale_id, &self.treasury.skyward_token_id)
+            {
+                in_skyward_sale.assert_valid_not_started();
+                let in_skyward_sale_id = sale_id + 1;
+                // Maybe registering skyward token for the account
+                self.internal_maybe_register_token(
+                    &mut account,
+                    &in_skyward_sale.in_token_account_id,
+                );
+                account.sales.insert(&in_skyward_sale_id);
+                sale.associated_sale_id = Some(in_skyward_sale_id);
+                self.sales
+                    .insert(&in_skyward_sale_id, &in_skyward_sale.into());
+                self.num_sales += 1;
+            }
+            self.accounts.insert(&sale.owner_id, &account.into());
+            self.sales.insert(&sale_id, &sale.into());
+            self.num_sales += 1;
+
+            refund_extra_storage_deposit(
+                env::storage_usage() - initial_storage_usage,
+                self.treasury.listing_fee_near,
+            );
         }
-        self.sales.insert(&sale_id, &sale.into());
-        refund_extra_storage_deposit(env::storage_usage() - initial_storage_usage, 0);
+        sale_id
     }
 
     pub fn get_sale(&self, sale_id: u64, account_id: Option<ValidAccountId>) -> Option<SaleOutput> {
