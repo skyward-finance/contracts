@@ -65,11 +65,14 @@ impl Account {
             .map(|s| s.into())
             .unwrap_or_else(|| Subscription {
                 shares: 0,
+                spent_in_balance_without_shares: 0,
+                last_in_balance: 0,
                 last_out_token_per_share: sale
                     .out_tokens
                     .iter()
                     .map(|out_token| out_token.per_share.clone())
                     .collect(),
+                claimed_out_balance: vec![0; sale.out_tokens.len()],
                 referral_id: referral_id.cloned(),
             });
         let out_token_amounts = subscription.touch(sale);
@@ -91,10 +94,19 @@ impl Account {
     ) -> Option<SubscriptionOutput> {
         let (subscription, out_token_remaining) =
             self.internal_get_subscription(sale_id, sale, None);
-        if subscription.shares > 0 {
+        if subscription.shares > 0 || out_token_remaining.iter().any(|&v| v > 0) {
+            let remaining_in_balance = sale.shares_to_in_balance(subscription.shares);
             Some(SubscriptionOutput {
-                remaining_in_balance: sale.shares_to_in_balance(subscription.shares).into(),
+                remaining_in_balance: remaining_in_balance.into(),
+                spent_in_balance: (subscription.spent_in_balance_without_shares
+                    + (subscription.last_in_balance - remaining_in_balance))
+                    .into(),
                 unclaimed_out_balances: out_token_remaining.into_iter().map(|b| b.into()).collect(),
+                claimed_out_balance: subscription
+                    .claimed_out_balance
+                    .into_iter()
+                    .map(|b| b.into())
+                    .collect(),
                 shares: subscription.shares.into(),
             })
         } else {
@@ -133,7 +145,11 @@ impl Contract {
     ) -> Subscription {
         let (mut subscription, out_token_amounts) =
             account.internal_get_subscription(sale_id, &sale, referral_id);
-        for (mut amount, out_token) in out_token_amounts.into_iter().zip(sale.out_tokens.iter()) {
+        for (index, (mut amount, out_token)) in out_token_amounts
+            .into_iter()
+            .zip(sale.out_tokens.iter())
+            .enumerate()
+        {
             if amount > 0 {
                 if &out_token.token_account_id == &self.treasury.skyward_token_id {
                     // Skyward token that will be used for referral.
@@ -160,12 +176,15 @@ impl Contract {
                     }
                 }
                 account.internal_token_deposit(&out_token.token_account_id, amount);
+                subscription.claimed_out_balance[index] += amount;
             }
         }
-        let remaining_in_amount = sale.shares_to_in_balance(subscription.shares);
-        if remaining_in_amount == 0 && subscription.shares > 0 {
-            sale.total_shares -= subscription.shares;
-            subscription.shares = 0;
+        if subscription.shares > 0 {
+            let remaining_in_amount = sale.shares_to_in_balance(subscription.shares);
+            if remaining_in_amount == 0 {
+                sale.total_shares -= subscription.shares;
+                subscription.shares = 0;
+            }
         }
         subscription
     }

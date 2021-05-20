@@ -1,4 +1,4 @@
-pub(crate) const ALREADY_STARTED: &str = "ERR_ALREADY_STARTED";
+pub(crate) const STARTS_TOO_SOON: &str = "ERR_STARTS_TOO_SOON";
 pub(crate) const MAX_DURATION_TO_START: &str = "ERR_MAX_DURATION_TO_START";
 pub(crate) const MAX_DURATION: &str = "ERR_MAX_DURATION";
 pub(crate) const MIN_DURATION: &str = "ERR_MIN_DURATION";
@@ -26,3 +26,5 @@ pub(crate) const MAX_NUM_OUT_TOKENS: &str = "ERR_MAX_NUM_OUT_TOKENS";
 pub(crate) const SELF_REFERRAL: &str = "ERR_SELF_REFERRAL";
 pub(crate) const UNREGISTERED_TREASURY_TOKEN: &str = "ERR_UNREGISTERED_TREASURY_TOKEN";
 pub(crate) const INVALID_INITIAL_SKYWARD_SALE: &str = "ERR_INVALID_INITIAL_SKYWARD_SALE";
+pub(crate) const TOO_LONG_TITLE: &str = "ERR_TOO_LONG_TITLE";
+pub(crate) const TOO_LONG_URL: &str = "ERR_TOO_LONG_URL";

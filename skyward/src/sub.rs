@@ -4,7 +4,10 @@ use near_sdk::json_types::WrappedBalance;
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct Subscription {
     pub shares: Balance,
+    pub last_in_balance: Balance,
+    pub spent_in_balance_without_shares: Balance,
     pub last_out_token_per_share: Vec<InnerU256>,
+    pub claimed_out_balance: Vec<Balance>,
     pub referral_id: Option<AccountId>,
 }
 
@@ -32,7 +35,9 @@ impl From<VSubscription> for Subscription {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct SubscriptionOutput {
     pub remaining_in_balance: WrappedBalance,
+    pub spent_in_balance: WrappedBalance,
     pub unclaimed_out_balances: Vec<WrappedBalance>,
+    pub claimed_out_balance: Vec<WrappedBalance>,
     pub shares: WrappedBalance,
 }
 
@@ -77,16 +82,21 @@ impl Contract {
             "{}",
             errors::NOT_ENOUGH_SHARES
         );
+        let remaining_in_balance = sale.shares_to_in_balance(subscription.shares);
+        subscription.spent_in_balance_without_shares +=
+            subscription.last_in_balance - remaining_in_balance;
         subscription.shares -= shares;
         let in_token_amount = sale.shares_to_in_balance(shares);
         if in_token_amount > 0 {
             account.internal_token_deposit(&sale.in_token_account_id, in_token_amount);
         }
-        account.internal_save_subscription(sale_id, subscription);
-        self.accounts.insert(&account_id, &account.into());
-
         sale.total_shares -= shares;
         sale.in_token_remaining -= in_token_amount;
+
+        subscription.last_in_balance = sale.shares_to_in_balance(subscription.shares);
+
+        account.internal_save_subscription(sale_id, subscription);
+        self.accounts.insert(&account_id, &account.into());
         self.sales.insert(&sale_id, &sale.into());
     }
 
@@ -108,13 +118,18 @@ impl Contract {
         for out_token in &sale.out_tokens {
             self.internal_maybe_register_token(&mut account, &out_token.token_account_id);
         }
+        let remaining_in_balance = sale.shares_to_in_balance(subscription.shares);
+        subscription.spent_in_balance_without_shares +=
+            subscription.last_in_balance - remaining_in_balance;
         let shares = sale.in_amount_to_shares(in_amount);
         subscription.shares += shares;
-        account.internal_save_subscription(sale_id, subscription);
-        self.accounts.insert(&account_id, &account.into());
-
         sale.total_shares += shares;
         sale.in_token_remaining += in_amount;
+
+        subscription.last_in_balance = sale.shares_to_in_balance(subscription.shares);
+
+        account.internal_save_subscription(sale_id, subscription);
+        self.accounts.insert(&account_id, &account.into());
         self.sales.insert(&sale_id, &sale.into());
     }
 }

@@ -2,7 +2,8 @@ use crate::*;
 use near_sdk::json_types::{WrappedBalance, WrappedDuration, WrappedTimestamp};
 use near_sdk::{assert_one_yocto, Duration, Timestamp};
 
-const MAX_DURATION_TO_START: Duration = 365 * 24 * 60 * 60 * 1_000_000_000;
+const MIN_DURATION_BEFORE_START: Duration = 7 * 24 * 60 * 60 * 1_000_000_000;
+const MAX_DURATION_BEFORE_START: Duration = 365 * 24 * 60 * 60 * 1_000_000_000;
 const MAX_DURATION: Duration = 4 * 366 * 24 * 60 * 60 * 1_000_000_000;
 /// Minimum duration. Use 1 nanosecond to run a simple auction.
 const MIN_DURATION: Duration = 1;
@@ -11,11 +12,16 @@ pub(crate) const MULTIPLIER: u128 = 10u128.pow(38);
 pub(crate) const TREASURY_FEE_DENOMINATOR: Balance = 100;
 pub(crate) const IN_SKYWARD_DENOMINATOR: Balance = 10;
 pub(crate) const MAX_NUM_OUT_TOKENS: usize = 4;
+pub(crate) const MAX_TITLE_LENGTH: usize = 250;
+pub(crate) const MAX_URL_LENGTH: usize = 250;
 
 #[derive(BorshSerialize, BorshDeserialize)]
 #[borsh_init(touch)]
 pub struct Sale {
     pub owner_id: AccountId,
+
+    pub title: String,
+    pub url: Option<String>,
 
     pub out_tokens: Vec<SaleOutToken>,
 
@@ -64,6 +70,9 @@ impl From<VSale> for Sale {
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct SaleInput {
+    pub title: String,
+    pub url: Option<String>,
+
     pub out_tokens: Vec<SaleInputOutToken>,
 
     pub in_token_account_id: ValidAccountId,
@@ -97,6 +106,10 @@ impl SaleOutToken {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct SaleOutput {
     pub sale_id: u64,
+
+    pub title: String,
+    pub url: Option<String>,
+
     pub owner_id: AccountId,
 
     pub out_tokens: Vec<SaleOutputOutToken>,
@@ -184,9 +197,13 @@ impl Sale {
 
     pub fn assert_valid_not_started(&self) {
         let timestamp = env::block_timestamp();
-        assert!(self.start_time > timestamp, "{}", errors::ALREADY_STARTED);
         assert!(
-            self.start_time < timestamp + MAX_DURATION_TO_START,
+            self.start_time >= timestamp + MIN_DURATION_BEFORE_START,
+            "{}",
+            errors::STARTS_TOO_SOON
+        );
+        assert!(
+            self.start_time < timestamp + MAX_DURATION_BEFORE_START,
             "{}",
             errors::MAX_DURATION_TO_START
         );
@@ -197,6 +214,17 @@ impl Sale {
             "{}",
             errors::MAX_NUM_OUT_TOKENS
         );
+        assert!(
+            self.title.len() <= MAX_TITLE_LENGTH,
+            "{}",
+            errors::TOO_LONG_TITLE
+        );
+        assert!(
+            self.url.as_ref().map(|s| s.len()).unwrap_or(0) <= MAX_URL_LENGTH,
+            "{}",
+            errors::TOO_LONG_URL
+        );
+
         let mut unique_tokens = Vec::with_capacity(self.out_tokens.len());
         for out_token in &self.out_tokens {
             assert!(out_token.remaining > 0, "{}", errors::ZERO_OUT_AMOUNT);
@@ -226,6 +254,8 @@ impl Sale {
         let start_time = sale.start_time.into();
         Sale {
             owner_id,
+            title: sale.title,
+            url: sale.url,
             out_tokens: sale
                 .out_tokens
                 .into_iter()
@@ -267,6 +297,8 @@ impl Sale {
         } else {
             Some(Sale {
                 owner_id: self.owner_id.clone(),
+                title: self.title.clone(),
+                url: self.url.clone(),
                 out_tokens,
                 in_token_account_id: skyward_token_id.clone(),
                 in_token_remaining: 0,
@@ -288,6 +320,8 @@ impl Sale {
         SaleOutput {
             sale_id,
             owner_id: self.owner_id,
+            title: self.title,
+            url: self.url,
             out_tokens: self.out_tokens.into_iter().map(|o| o.into()).collect(),
             in_token_account_id: self.in_token_account_id,
             in_token_remaining: self.in_token_remaining.into(),
