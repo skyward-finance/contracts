@@ -164,6 +164,7 @@ impl Sale {
             return;
         }
         if self.total_shares == 0 {
+            self.last_timestamp = timestamp;
             return;
         }
         let time_diff = U256::from(timestamp - self.last_timestamp);
