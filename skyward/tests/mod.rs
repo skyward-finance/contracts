@@ -2149,6 +2149,63 @@ fn test_join_sale_and_leave() {
 }
 
 #[test]
+fn test_join_sale_and_withdraw_exact() {
+    let e = Env::init(1);
+    let alice = e.users.get(0).unwrap();
+
+    let sale_amount = 10000 * SKYWARD_TOKEN_BASE;
+    e.register_and_deposit(&e.skyward_dao, &e.skyward_token, sale_amount * 2);
+
+    e.register_skyward_token(alice);
+    assert_eq!(e.skyward_total_supply(), SKYWARD_TOTAL_SUPPLY);
+
+    let sale = e.sale_create(&e.skyward_dao, &[(&e.skyward_token, sale_amount)]);
+    assert_eq!(e.skyward_total_supply(), SKYWARD_TOTAL_SUPPLY);
+
+    assert_eq!(
+        e.balances_of(&e.skyward_dao),
+        vec![
+            (e.skyward_token.account_id.clone(), sale_amount),
+            (e.w_near.account_id.clone(), to_yocto("0")),
+        ]
+    );
+
+    alice
+        .function_call(
+            e.skyward
+                .contract
+                .sale_deposit_in_token(sale.sale_id, to_yocto("4").into(), None),
+            BASE_GAS,
+            to_yocto("0.01"),
+        )
+        .assert_success();
+
+    e.near.borrow_runtime_mut().cur_block.block_timestamp = sale.start_time.0 + sale.duration.0 / 3;
+
+    assert_eq!(
+        e.balances_of(alice),
+        vec![
+            (e.w_near.account_id.clone(), to_yocto("6")),
+            (e.skyward_token.account_id.clone(), 0),
+        ]
+    );
+    alice
+        .function_call(
+            e.skyward
+                .contract
+                .sale_withdraw_in_token_exact(sale.sale_id, to_yocto("2").into()),
+            BASE_GAS,
+            1,
+        )
+        .assert_success();
+
+    assert_eq!(
+        e.balances_of(alice)[0],
+        (e.w_near.account_id.clone(), to_yocto("8")),
+    );
+}
+
+#[test]
 fn test_skyward_sale_alice_joins_in_the_middle() {
     let e = Env::init(2);
     let alice = e.users.get(0).unwrap();

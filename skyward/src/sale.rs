@@ -347,7 +347,7 @@ impl Sale {
         .as_u128();
     }
 
-    pub fn in_amount_to_shares(&self, in_amount: Balance) -> Balance {
+    pub fn in_amount_to_shares(&self, in_amount: Balance, round_up: bool) -> Balance {
         if self.total_shares == 0 {
             return in_amount;
         }
@@ -356,13 +356,20 @@ impl Sale {
             "{}",
             errors::SALE_ENDED
         );
-        let num_shares = U256::from(in_amount) * U256::from(self.total_shares)
-            / U256::from(self.in_token_remaining);
-        assert!(
-            num_shares + U256::from(self.total_shares) < U256::from(u128::MAX),
-            "{}",
-            errors::SHARES_OVERFLOW
-        );
+        let in_token_remaining = U256::from(self.in_token_remaining);
+        let num_shares = U256::from(in_amount) * U256::from(self.total_shares);
+        let num_shares = if round_up {
+            (num_shares + in_token_remaining - 1) / in_token_remaining
+        } else {
+            num_shares / in_token_remaining
+        };
+        if !round_up {
+            assert!(
+                num_shares + U256::from(self.total_shares) < U256::from(u128::MAX),
+                "{}",
+                errors::SHARES_OVERFLOW
+            );
+        }
         num_shares.as_u128()
     }
 
@@ -536,6 +543,15 @@ impl Contract {
         let initial_storage_usage = env::storage_usage();
         let account_id = env::predecessor_account_id();
         self.internal_withdraw_shares(sale_id, &account_id, shares.map(|s| s.0));
+        refund_released_storage(&account_id, initial_storage_usage - env::storage_usage());
+    }
+
+    #[payable]
+    pub fn sale_withdraw_in_token_exact(&mut self, sale_id: u64, amount: WrappedBalance) {
+        assert_one_yocto();
+        let initial_storage_usage = env::storage_usage();
+        let account_id = env::predecessor_account_id();
+        self.internal_withdraw_in_token_exact(sale_id, &account_id, amount.0);
         refund_released_storage(&account_id, initial_storage_usage - env::storage_usage());
     }
 

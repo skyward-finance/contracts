@@ -100,6 +100,38 @@ impl Contract {
         self.sales.insert(&sale_id, &sale.into());
     }
 
+    pub fn internal_withdraw_in_token_exact(
+        &mut self,
+        sale_id: u64,
+        account_id: &AccountId,
+        in_amount: Balance,
+    ) {
+        let mut sale = self.internal_unwrap_sale(sale_id);
+        let mut account = self.internal_unwrap_account(account_id);
+        let mut subscription =
+            self.internal_update_subscription(&mut account, sale_id, &mut sale, None);
+        assert!(in_amount > 0, "{}", errors::ZERO_IN_AMOUNT);
+        let remaining_in_balance = sale.shares_to_in_balance(subscription.shares);
+        assert!(
+            in_amount <= remaining_in_balance,
+            "{}",
+            errors::NOT_ENOUGH_BALANCE
+        );
+        let shares = sale.in_amount_to_shares(in_amount, true);
+        subscription.spent_in_balance_without_shares +=
+            subscription.last_in_balance - remaining_in_balance;
+        subscription.shares -= shares;
+        account.internal_token_deposit(&sale.in_token_account_id, in_amount);
+        sale.total_shares -= shares;
+        sale.in_token_remaining -= in_amount;
+
+        subscription.last_in_balance = sale.shares_to_in_balance(subscription.shares);
+
+        account.internal_save_subscription(sale_id, subscription);
+        self.accounts.insert(&account_id, &account.into());
+        self.sales.insert(&sale_id, &sale.into());
+    }
+
     pub fn internal_deposit_in_amount(
         &mut self,
         sale_id: u64,
@@ -121,7 +153,7 @@ impl Contract {
         let remaining_in_balance = sale.shares_to_in_balance(subscription.shares);
         subscription.spent_in_balance_without_shares +=
             subscription.last_in_balance - remaining_in_balance;
-        let shares = sale.in_amount_to_shares(in_amount);
+        let shares = sale.in_amount_to_shares(in_amount, false);
         subscription.shares += shares;
         sale.total_shares += shares;
         sale.in_token_remaining += in_amount;
