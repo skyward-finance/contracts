@@ -28,7 +28,7 @@ const SKYWARD_DAO_ID: &str = "skyward-dao.near";
 const TOKEN1_ID: &str = "token1.near";
 
 const WEEK: u64 = 7 * 24 * 60 * 60 * 10u64.pow(9);
-const BASE_GAS: Gas = 10_000_000_000_000;
+const BASE_GAS: Gas = 15_000_000_000_000;
 const TON_OF_GAS: Gas = 50_000_000_000_000;
 const SKYWARD_TOKEN_DECIMALS: u8 = 18;
 const SKYWARD_TOKEN_BASE: Balance = 10u128.pow(SKYWARD_TOKEN_DECIMALS as u32);
@@ -1976,7 +1976,7 @@ fn test_join_sale_and_leave() {
             }],
             in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
-            in_token_paid_unclaimed: to_yocto("4.5").into(),
+            in_token_paid_unclaimed: to_yocto("2").into(),
             in_token_paid: to_yocto("4.5").into(),
             total_shares: to_yocto("4").into(),
             start_time: sale.start_time.clone(),
@@ -1995,7 +1995,7 @@ fn test_join_sale_and_leave() {
 
     assert_eq!(
         e.get_treasury_balances(),
-        vec![(e.w_near.account_id.clone(), 0)]
+        vec![(e.w_near.account_id.clone(), to_yocto("0.025"))]
     );
     assert_eq!(
         e.skyward_total_supply(),
@@ -2425,7 +2425,7 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
             }],
             in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("5").into(),
-            in_token_paid_unclaimed: to_yocto("1").into(),
+            in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("2").into(),
             total_shares: to_yocto("10").into(),
             start_time: sale.start_time.clone(),
@@ -2528,7 +2528,7 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
             }],
             in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("2.0").into(),
-            in_token_paid_unclaimed: to_yocto("2.5").into(),
+            in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("4.5").into(),
             total_shares: to_yocto("8").into(),
             start_time: sale.start_time.clone(),
@@ -2574,7 +2574,7 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
             }],
             in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
-            in_token_paid_unclaimed: to_yocto("4.5").into(),
+            in_token_paid_unclaimed: to_yocto("2").into(),
             in_token_paid: to_yocto("6.5").into(),
             total_shares: to_yocto("8").into(),
             start_time: sale.start_time.clone(),
@@ -2605,7 +2605,7 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
 
     assert_eq!(
         e.get_treasury_balances(),
-        vec![(e.w_near.account_id.clone(), to_yocto("2"))]
+        vec![(e.w_near.account_id.clone(), to_yocto("4.5"))]
     );
 
     assert_eq!(

@@ -72,6 +72,7 @@ impl Contract {
         shares: Option<Balance>,
     ) {
         let mut sale = self.internal_unwrap_sale(sale_id);
+        self.internal_distribute_unclaimed_tokens(&mut sale);
         let mut account = self.internal_unwrap_account(account_id);
         let mut subscription =
             self.internal_update_subscription(&mut account, sale_id, &mut sale, None);
@@ -107,6 +108,7 @@ impl Contract {
         in_amount: Balance,
     ) {
         let mut sale = self.internal_unwrap_sale(sale_id);
+        self.internal_distribute_unclaimed_tokens(&mut sale);
         let mut account = self.internal_unwrap_account(account_id);
         let mut subscription =
             self.internal_update_subscription(&mut account, sale_id, &mut sale, None);
@@ -141,6 +143,7 @@ impl Contract {
     ) {
         assert_ne!(referral_id, Some(account_id), "{}", errors::SELF_REFERRAL);
         let mut sale = self.internal_unwrap_sale(sale_id);
+        self.internal_distribute_unclaimed_tokens(&mut sale);
         let mut account = self.internal_unwrap_account(account_id);
         let mut subscription =
             self.internal_update_subscription(&mut account, sale_id, &mut sale, referral_id);
