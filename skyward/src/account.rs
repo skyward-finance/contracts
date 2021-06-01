@@ -234,17 +234,21 @@ impl Contract {
         refund_extra_storage_deposit(env::storage_usage() - initial_storage_usage, 0);
     }
 
-    #[payable]
     pub fn withdraw_token(
         &mut self,
         token_account_id: ValidAccountId,
-        amount: WrappedBalance,
+        amount: Option<WrappedBalance>,
     ) -> Promise {
-        assert_one_yocto();
         let account_id = env::predecessor_account_id();
         let mut account = self.internal_unwrap_account(&account_id);
-        account.internal_token_withdraw(token_account_id.as_ref(), amount.0);
-        self.internal_ft_transfer(&account_id, token_account_id.as_ref(), amount.0)
+        let amount = amount.map(|a| a.0).unwrap_or_else(|| {
+            account
+                .balances
+                .get(token_account_id.as_ref())
+                .expect(errors::TOKEN_NOT_REGISTERED)
+        });
+        account.internal_token_withdraw(token_account_id.as_ref(), amount);
+        self.internal_ft_transfer(&account_id, token_account_id.as_ref(), amount)
     }
 
     #[payable]

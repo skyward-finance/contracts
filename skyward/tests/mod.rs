@@ -1051,9 +1051,9 @@ fn test_join_in_skyward_sale() {
     let res = bob.function_call(
         e.skyward
             .contract
-            .withdraw_token(token1.valid_account_id(), to_yocto("100").into()),
+            .withdraw_token(token1.valid_account_id(), Some(to_yocto("100").into())),
         TON_OF_GAS,
-        1,
+        0,
     );
     res.assert_success();
     let res: bool = res.unwrap_json();
@@ -1073,9 +1073,9 @@ fn test_join_in_skyward_sale() {
     let res = bob.function_call(
         e.skyward
             .contract
-            .withdraw_token(token1.valid_account_id(), to_yocto("100").into()),
+            .withdraw_token(token1.valid_account_id(), Some(to_yocto("100").into())),
         TON_OF_GAS,
-        1,
+        0,
     );
     res.assert_success();
     let res: bool = res.unwrap_json();
