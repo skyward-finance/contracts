@@ -171,7 +171,7 @@ impl Contract {
                         }
                         if ref_amount > 0 {
                             // Invalid referral_id. Burning instead
-                            self.treasury.skyward_total_supply -= ref_amount;
+                            self.treasury.skyward_burned_amount += ref_amount;
                         }
                     }
                 }

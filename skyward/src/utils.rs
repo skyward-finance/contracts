@@ -1,5 +1,5 @@
 use crate::*;
-use near_sdk::Gas;
+use near_sdk::{Gas, Timestamp};
 
 pub(crate) const NO_DEPOSIT: Balance = 0;
 pub(crate) const ONE_YOCTO: Balance = 1;
@@ -17,6 +17,8 @@ pub(crate) const EXTRA_NEAR_FOR_STORAGE: Balance = 1000 * env::STORAGE_PRICE_PER
 pub(crate) const EXTRA_NEAR: Balance = EXTRA_NEAR_FOR_STORAGE + STORAGE_DEPOSIT;
 pub(crate) const MIN_EXTRA_NEAR: Balance = EXTRA_NEAR + ONE_NEAR;
 pub(crate) const AFTER_NEAR_DEPOSIT_GAS: Gas = BASE_GAS;
+
+pub type TimestampSec = u32;
 
 uint::construct_uint! {
     pub struct U256(4);
@@ -62,4 +64,8 @@ pub(crate) fn assert_at_least_one_yocto() {
         "{}",
         errors::NEED_AT_LEAST_ONE_YOCTO
     )
+}
+
+pub(crate) fn to_nano(timestamp: TimestampSec) -> Timestamp {
+    Timestamp::from(timestamp) * 10u64.pow(9)
 }

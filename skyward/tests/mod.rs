@@ -2,12 +2,12 @@ use near_contract_standards::fungible_token::metadata::{FungibleTokenMetadata, F
 use near_sdk::json_types::{ValidAccountId, WrappedBalance, U128};
 use near_sdk::serde_json::json;
 use near_sdk::test_utils::accounts;
-use near_sdk::{env, AccountId, Balance, Gas};
+use near_sdk::{env, AccountId, Balance, Gas, Timestamp};
 use near_sdk_sim::runtime::GenesisConfig;
 use near_sdk_sim::{deploy, init_simulator, to_yocto, ContractAccount, UserAccount};
 use skyward::{
     ContractContract as SkywardContract, SaleInput, SaleInputOutToken, SaleOutput,
-    SaleOutputOutToken, SubscriptionOutput,
+    SaleOutputOutToken, SubscriptionOutput, VestingIntervalInput,
 };
 use std::convert::TryInto;
 
@@ -27,7 +27,10 @@ const SKYWARD_DAO_ID: &str = "skyward-dao.near";
 
 const TOKEN1_ID: &str = "token1.near";
 
-const WEEK: u64 = 7 * 24 * 60 * 60 * 10u64.pow(9);
+const GENESIS_TIME: u32 = 1_600_000_000;
+const DAY: u32 = 24 * 60 * 60;
+const WEEK: u32 = 7 * DAY;
+const MONTH: u32 = 30 * DAY;
 const BASE_GAS: Gas = 15_000_000_000_000;
 const TON_OF_GAS: Gas = 50_000_000_000_000;
 const SKYWARD_TOKEN_DECIMALS: u8 = 18;
@@ -65,10 +68,29 @@ fn storage_deposit(user: &UserAccount, token_account_id: &str, account_id: &str)
     .assert_success();
 }
 
+fn to_nano(timestamp: u32) -> Timestamp {
+    Timestamp::from(timestamp) * 10u64.pow(9)
+}
+
 impl Env {
     pub fn init(num_users: usize) -> Self {
+        Self::init_with_schedule(
+            num_users,
+            vec![VestingIntervalInput {
+                start_timestamp: GENESIS_TIME - 1,
+                end_timestamp: GENESIS_TIME,
+                amount: SKYWARD_TOTAL_SUPPLY.into(),
+            }],
+        )
+    }
+
+    pub fn init_with_schedule(
+        num_users: usize,
+        skyward_vesting_schedule: Vec<VestingIntervalInput>,
+    ) -> Self {
         let mut genesis_config = GenesisConfig::default();
         genesis_config.block_prod_time = 0;
+        genesis_config.genesis_time = to_nano(GENESIS_TIME);
         let root = init_simulator(Some(genesis_config));
         let near = root.create_user(NEAR.to_string(), to_yocto("1000"));
         let skyward_dao = near.create_user(SKYWARD_DAO_ID.to_string(), to_yocto("100"));
@@ -89,7 +111,7 @@ impl Env {
             gas: BASE_GAS,
             init_method: new(
                 SKYWARD_TOKEN_ID.to_string().try_into().unwrap(),
-                SKYWARD_TOTAL_SUPPLY.into(),
+                skyward_vesting_schedule,
                 LISTING_FEE_NEAR.into(),
                 w_near.valid_account_id()
             )
@@ -216,9 +238,23 @@ impl Env {
         user: &UserAccount,
         tokens: &[(&UserAccount, Balance)],
     ) -> SaleOutput {
+        self.sale_create_with_time(
+            user,
+            tokens,
+            to_nano(WEEK) + BLOCK_DURATION * 15,
+            BLOCK_DURATION * 60,
+        )
+    }
+
+    pub fn sale_create_with_time(
+        &self,
+        user: &UserAccount,
+        tokens: &[(&UserAccount, Balance)],
+        start_offset: u64,
+        sale_duration: u64,
+    ) -> SaleOutput {
         let current_time = user.borrow_runtime().current_block().block_timestamp;
-        let start_time = current_time + WEEK + BLOCK_DURATION * 15;
-        let sale_duration = BLOCK_DURATION * 60;
+        let start_time = current_time + start_offset;
 
         let initial_balance = user.account().unwrap().amount;
 
@@ -290,10 +326,10 @@ impl Env {
         res.into_iter().map(|(a, b)| (a, b.0)).collect()
     }
 
-    pub fn skyward_total_supply(&self) -> Balance {
+    pub fn skyward_circulating_supply(&self) -> Balance {
         let res: WrappedBalance = self
             .near
-            .view_method_call(self.skyward.contract.get_skyward_total_supply())
+            .view_method_call(self.skyward.contract.get_skyward_circulating_supply())
             .unwrap_json();
         res.into()
     }
@@ -1370,7 +1406,7 @@ fn test_join_sale_with_referral() {
             (e.skyward_token.account_id.clone(), sale_amount / 100 * 99),
         ]
     );
-    assert_eq!(e.skyward_total_supply(), SKYWARD_TOTAL_SUPPLY);
+    assert_eq!(e.skyward_circulating_supply(), SKYWARD_TOTAL_SUPPLY);
 }
 
 #[test]
@@ -1383,10 +1419,10 @@ fn test_join_sale_with_referral_and_alice() {
     e.register_and_deposit(&e.skyward_dao, &e.skyward_token, sale_amount * 2);
 
     e.register_skyward_token(alice);
-    assert_eq!(e.skyward_total_supply(), SKYWARD_TOTAL_SUPPLY);
+    assert_eq!(e.skyward_circulating_supply(), SKYWARD_TOTAL_SUPPLY);
 
     let sale = e.sale_create(&e.skyward_dao, &[(&e.skyward_token, sale_amount)]);
-    assert_eq!(e.skyward_total_supply(), SKYWARD_TOTAL_SUPPLY);
+    assert_eq!(e.skyward_circulating_supply(), SKYWARD_TOTAL_SUPPLY);
 
     assert_eq!(
         e.balances_of(&e.skyward_dao),
@@ -1574,7 +1610,7 @@ fn test_join_sale_with_referral_and_alice() {
         e.get_treasury_balances(),
         vec![(e.w_near.account_id.clone(), 0),]
     );
-    assert_eq!(e.skyward_total_supply(), SKYWARD_TOTAL_SUPPLY);
+    assert_eq!(e.skyward_circulating_supply(), SKYWARD_TOTAL_SUPPLY);
 
     alice
         .function_call(
@@ -1656,7 +1692,7 @@ fn test_join_sale_with_referral_and_alice() {
         }),
     );
 
-    assert_eq!(e.skyward_total_supply(), SKYWARD_TOTAL_SUPPLY);
+    assert_eq!(e.skyward_circulating_supply(), SKYWARD_TOTAL_SUPPLY);
 
     bob.function_call(e.skyward.contract.sale_claim_out_tokens(0), BASE_GAS, 0)
         .assert_success();
@@ -1699,7 +1735,7 @@ fn test_join_sale_with_referral_and_alice() {
         }),
     );
 
-    assert_eq!(e.skyward_total_supply(), SKYWARD_TOTAL_SUPPLY);
+    assert_eq!(e.skyward_circulating_supply(), SKYWARD_TOTAL_SUPPLY);
     assert_eq!(
         e.get_treasury_balances(),
         vec![(e.w_near.account_id.clone(), to_yocto("0.05")),]
@@ -1758,7 +1794,7 @@ fn test_join_sale_with_referral_and_alice() {
     );
 
     assert_eq!(
-        e.skyward_total_supply(),
+        e.skyward_circulating_supply(),
         SKYWARD_TOTAL_SUPPLY - sale_amount / 5 / 100
     );
 
@@ -1788,10 +1824,10 @@ fn test_join_sale_and_leave() {
     e.register_and_deposit(&e.skyward_dao, &e.skyward_token, sale_amount * 2);
 
     e.register_skyward_token(alice);
-    assert_eq!(e.skyward_total_supply(), SKYWARD_TOTAL_SUPPLY);
+    assert_eq!(e.skyward_circulating_supply(), SKYWARD_TOTAL_SUPPLY);
 
     let sale = e.sale_create(&e.skyward_dao, &[(&e.skyward_token, sale_amount)]);
-    assert_eq!(e.skyward_total_supply(), SKYWARD_TOTAL_SUPPLY);
+    assert_eq!(e.skyward_circulating_supply(), SKYWARD_TOTAL_SUPPLY);
 
     assert_eq!(
         e.balances_of(&e.skyward_dao),
@@ -1998,7 +2034,7 @@ fn test_join_sale_and_leave() {
         vec![(e.w_near.account_id.clone(), to_yocto("0.025"))]
     );
     assert_eq!(
-        e.skyward_total_supply(),
+        e.skyward_circulating_supply(),
         SKYWARD_TOTAL_SUPPLY - sale_amount / 5 / 2 / 100
     );
 
@@ -2033,7 +2069,7 @@ fn test_join_sale_and_leave() {
         vec![(e.w_near.account_id.clone(), to_yocto("0.045")),]
     );
     assert_eq!(
-        e.skyward_total_supply(),
+        e.skyward_circulating_supply(),
         SKYWARD_TOTAL_SUPPLY - sale_amount / 5 / 2 / 100
     );
     assert_eq!(
@@ -2119,7 +2155,7 @@ fn test_join_sale_and_leave() {
     );
 
     assert_eq!(
-        e.skyward_total_supply(),
+        e.skyward_circulating_supply(),
         SKYWARD_TOTAL_SUPPLY - sale_amount / 5 / 2 / 100
     );
     assert_eq!(
@@ -2157,10 +2193,10 @@ fn test_join_sale_and_withdraw_exact() {
     e.register_and_deposit(&e.skyward_dao, &e.skyward_token, sale_amount * 2);
 
     e.register_skyward_token(alice);
-    assert_eq!(e.skyward_total_supply(), SKYWARD_TOTAL_SUPPLY);
+    assert_eq!(e.skyward_circulating_supply(), SKYWARD_TOTAL_SUPPLY);
 
     let sale = e.sale_create(&e.skyward_dao, &[(&e.skyward_token, sale_amount)]);
-    assert_eq!(e.skyward_total_supply(), SKYWARD_TOTAL_SUPPLY);
+    assert_eq!(e.skyward_circulating_supply(), SKYWARD_TOTAL_SUPPLY);
 
     assert_eq!(
         e.balances_of(&e.skyward_dao),
@@ -2207,7 +2243,7 @@ fn test_join_sale_and_withdraw_exact() {
 
 #[test]
 fn test_skyward_sale_alice_joins_in_the_middle() {
-    let e = Env::init(2);
+    let e = Env::init_with_schedule(2, vec![]);
     let alice = e.users.get(0).unwrap();
     let bob = e.users.get(1).unwrap();
 
@@ -2232,6 +2268,8 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
     );
 
     let sale = e.sale_create(&e.skyward.user_account, &[(&e.skyward_token, sale_amount)]);
+
+    assert_eq!(e.skyward_circulating_supply(), 0);
 
     bob.function_call(
         e.skyward
@@ -2320,8 +2358,15 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
         }
     );
 
+    assert_eq!(e.skyward_circulating_supply(), sale_amount / 4);
+
     bob.function_call(e.skyward.contract.sale_claim_out_tokens(0), BASE_GAS, 0)
         .assert_success();
+
+    assert_eq!(
+        e.skyward_circulating_supply(),
+        sale_amount / 4 - sale_amount / 4 / 100
+    );
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
     assert_eq!(
@@ -2396,6 +2441,11 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
                 shares: to_yocto("4").into(),
             }),
         }
+    );
+
+    assert_eq!(
+        e.skyward_circulating_supply(),
+        sale_amount / 2 - sale_amount / 4 / 100
     );
 
     alice
@@ -2609,8 +2659,8 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
     );
 
     assert_eq!(
-        e.skyward_total_supply(),
-        SKYWARD_TOTAL_SUPPLY - sale_amount * 3 / 5 / 100
+        e.skyward_circulating_supply(),
+        sale_amount - sale_amount * 3 / 5 / 100
     );
 
     alice
@@ -2628,8 +2678,8 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
         ]
     );
     assert_eq!(
-        e.skyward_total_supply(),
-        SKYWARD_TOTAL_SUPPLY - sale_amount * 3 / 5 / 100 - sale_amount * 27 / 80 / 100
+        e.skyward_circulating_supply(),
+        sale_amount - sale_amount * 3 / 5 / 100 - sale_amount * 27 / 80 / 100
     );
     assert_eq!(
         e.get_treasury_balances(),
@@ -2715,8 +2765,8 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
     );
 
     assert_eq!(
-        e.skyward_total_supply(),
-        SKYWARD_TOTAL_SUPPLY - sale_amount / 100
+        e.skyward_circulating_supply(),
+        sale_amount - sale_amount / 100
     );
 
     assert_eq!(
@@ -2733,4 +2783,110 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
             ),
         ]
     );
+}
+
+#[test]
+fn test_circulating_supply() {
+    let e = Env::init_with_schedule(
+        0,
+        vec![
+            VestingIntervalInput {
+                start_timestamp: GENESIS_TIME + MONTH,
+                end_timestamp: GENESIS_TIME + MONTH * 2,
+                amount: U128(10000 * SKYWARD_TOKEN_BASE),
+            },
+            VestingIntervalInput {
+                start_timestamp: GENESIS_TIME + MONTH * 6,
+                end_timestamp: GENESIS_TIME + MONTH * 12,
+                amount: U128(90000 * SKYWARD_TOKEN_BASE),
+            },
+        ],
+    );
+
+    let total_sale_amount = 900000 * SKYWARD_TOKEN_BASE;
+    e.skyward_dao
+        .call(
+            e.skyward_token.account_id.clone(),
+            "ft_transfer",
+            &json!({
+                "receiver_id": SKYWARD_ID,
+                "amount": U128::from(total_sale_amount),
+            })
+            .to_string()
+            .into_bytes(),
+            BASE_GAS,
+            1,
+        )
+        .assert_success();
+    assert_eq!(
+        e.get_token_balance(&e.skyward_token, &e.skyward.user_account),
+        total_sale_amount
+    );
+
+    let sales_input = vec![
+        (5, WEEK),
+        (20, WEEK * 3),
+        (20, MONTH + WEEK * 3),
+        (15, 2 * MONTH + WEEK * 3),
+        (10, 3 * MONTH + WEEK * 3),
+        (10, 4 * MONTH + WEEK * 3),
+        (10, 5 * MONTH + WEEK * 3),
+    ];
+
+    let sales: Vec<_> = sales_input
+        .iter()
+        .map(|&(amount, start_offset)| {
+            let sale_amount = amount * 10000 * SKYWARD_TOKEN_BASE;
+            e.sale_create_with_time(
+                &e.skyward.user_account,
+                &[(&e.skyward_token, sale_amount)],
+                to_nano(start_offset),
+                to_nano(WEEK),
+            )
+        })
+        .collect();
+
+    assert_eq!(e.skyward_circulating_supply(), 0);
+
+    e.near.borrow_runtime_mut().cur_block.block_timestamp =
+        sales[0].start_time.0 + sales[0].duration.0 / 2;
+    assert_eq!(e.skyward_circulating_supply(), 25000 * SKYWARD_TOKEN_BASE);
+
+    e.near.borrow_runtime_mut().cur_block.block_timestamp =
+        sales[0].start_time.0 + sales[0].duration.0;
+    assert_eq!(e.skyward_circulating_supply(), 50000 * SKYWARD_TOKEN_BASE);
+
+    e.near.borrow_runtime_mut().cur_block.block_timestamp = to_nano(GENESIS_TIME + WEEK * 2);
+    assert_eq!(e.skyward_circulating_supply(), 50000 * SKYWARD_TOKEN_BASE);
+
+    e.near.borrow_runtime_mut().cur_block.block_timestamp = sales[1].start_time.0;
+    assert_eq!(e.skyward_circulating_supply(), 50000 * SKYWARD_TOKEN_BASE);
+
+    e.near.borrow_runtime_mut().cur_block.block_timestamp =
+        sales[1].start_time.0 + sales[1].duration.0 / 2;
+    assert_eq!(e.skyward_circulating_supply(), 150000 * SKYWARD_TOKEN_BASE);
+
+    e.near.borrow_runtime_mut().cur_block.block_timestamp =
+        sales[1].start_time.0 + sales[1].duration.0;
+    assert_eq!(e.skyward_circulating_supply(), 250000 * SKYWARD_TOKEN_BASE);
+
+    e.near.borrow_runtime_mut().cur_block.block_timestamp =
+        to_nano(GENESIS_TIME + MONTH + MONTH / 2);
+    assert_eq!(e.skyward_circulating_supply(), 255000 * SKYWARD_TOKEN_BASE);
+
+    e.near.borrow_runtime_mut().cur_block.block_timestamp = to_nano(GENESIS_TIME + MONTH * 2);
+    assert_eq!(e.skyward_circulating_supply(), 460000 * SKYWARD_TOKEN_BASE);
+
+    e.near.borrow_runtime_mut().cur_block.block_timestamp =
+        sales[3].start_time.0 + sales[3].duration.0 / 2;
+    assert_eq!(e.skyward_circulating_supply(), 535000 * SKYWARD_TOKEN_BASE);
+
+    e.near.borrow_runtime_mut().cur_block.block_timestamp = to_nano(GENESIS_TIME + MONTH * 6);
+    assert_eq!(e.skyward_circulating_supply(), 910000 * SKYWARD_TOKEN_BASE);
+
+    e.near.borrow_runtime_mut().cur_block.block_timestamp = to_nano(GENESIS_TIME + MONTH * 9);
+    assert_eq!(e.skyward_circulating_supply(), 955000 * SKYWARD_TOKEN_BASE);
+
+    e.near.borrow_runtime_mut().cur_block.block_timestamp = to_nano(GENESIS_TIME + MONTH * 12);
+    assert_eq!(e.skyward_circulating_supply(), SKYWARD_TOTAL_SUPPLY);
 }

@@ -455,6 +455,18 @@ impl Contract {
             );
             // Registering IN token into the treasury
             self.treasury.internal_deposit(&sale.in_token_account_id, 0);
+            // Registering SKYWARD vesting schedule
+            let mut skyward_vesting_schedule =
+                self.treasury.skyward_vesting_schedule.get().unwrap();
+            skyward_vesting_schedule.push(VestingInterval {
+                start_timestamp: sale.start_time,
+                end_timestamp: sale.start_time + sale.duration,
+                amount: sale.out_tokens[0].remaining,
+            });
+            self.treasury
+                .skyward_vesting_schedule
+                .set(&skyward_vesting_schedule);
+
             self.sales.insert(&sale_id, &sale.into());
             self.num_sales += 1;
         } else {

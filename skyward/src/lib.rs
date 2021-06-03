@@ -32,6 +32,7 @@ pub(crate) enum StorageKey {
     AccountSales { account_id: AccountId },
     Sales,
     TreasuryBalances,
+    VestingSchedule,
 }
 
 #[near_bindgen]
@@ -51,7 +52,7 @@ impl Contract {
     #[init]
     pub fn new(
         skyward_token_id: ValidAccountId,
-        skyward_total_supply: WrappedBalance,
+        skyward_vesting_schedule: Vec<VestingIntervalInput>,
         listing_fee_near: WrappedBalance,
         w_near_token_id: ValidAccountId,
     ) -> Self {
@@ -61,7 +62,7 @@ impl Contract {
             num_sales: 0,
             treasury: Treasury::new(
                 skyward_token_id.into(),
-                skyward_total_supply.0,
+                skyward_vesting_schedule,
                 listing_fee_near.0,
                 w_near_token_id.into(),
             ),
