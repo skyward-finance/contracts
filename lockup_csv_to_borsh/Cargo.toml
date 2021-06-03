@@ -1,6 +1,6 @@
 [package]
 name = "lockup_csv_to_borsh"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Spensa Nightshade <dev@skyward.finance>"]
 edition = "2018"
 
@@ -9,3 +9,4 @@ csv = "1.1.6"
 borsh = "0.9.0"
 near-sdk = "3.1.0"
 chrono = "0.4"
+sha2 = "0.9.0"

@@ -307,12 +307,13 @@ checksum = "18794a8ad5b29321f790b55d93dfba91e125cb1a9edbd4f8e3150acc771c1a5e"
 
 [[package]]
 name = "lockup_csv_to_borsh"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "borsh 0.9.0",
  "chrono",
  "csv",
  "near-sdk",
+ "sha2",
 ]
 
 [[package]]

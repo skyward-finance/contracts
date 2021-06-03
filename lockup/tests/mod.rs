@@ -1,7 +1,8 @@
-use lockup::{Account, ContractContract as LockupContract, Stats, TimestampSec};
+use lockup::{AccountOutput, ContractContract as LockupContract, Stats, TimestampSec};
 use near_contract_standards::fungible_token::metadata::{FungibleTokenMetadata, FT_METADATA_SPEC};
 use near_sdk::env::STORAGE_PRICE_PER_BYTE;
 use near_sdk::json_types::{ValidAccountId, WrappedBalance, U128};
+use near_sdk::serde::Serialize;
 use near_sdk::serde_json::json;
 use near_sdk::{env, Balance, Gas, Timestamp};
 use near_sdk_sim::runtime::GenesisConfig;
@@ -32,6 +33,7 @@ const NEAR: &str = "near";
 const SKYWARD_ID: &str = "skyward.near";
 const SKYWARD_CLAIM_ID: &str = "claim.skyward.near";
 const SKYWARD_TOKEN_ID: &str = "token.skyward.near";
+const WRAP_NEAR_ID: &str = "wrap_near.skyward.near";
 const SKYWARD_DAO_ID: &str = "skyward-dao.near";
 
 const BASE_GAS: Gas = 10_000_000_000_000;
@@ -51,6 +53,14 @@ const TIMESTAMP_2: TimestampSec = 1625097600;
 const TIMESTAMP_3: TimestampSec = 1633046400;
 const BALANCE_1: Balance = 10u128.pow(16);
 const BALANCE_2: Balance = 10u128.pow(19);
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+struct VestingIntervalInput {
+    pub start_timestamp: TimestampSec,
+    pub end_timestamp: TimestampSec,
+    pub amount: WrappedBalance,
+}
 
 pub struct Env {
     pub root: UserAccount,
@@ -91,8 +101,15 @@ impl Env {
             "new",
             &json!({
                 "skyward_token_id": SKYWARD_TOKEN_ID.to_string(),
-                "skyward_total_supply": U128::from(SKYWARD_TOTAL_SUPPLY),
+                "skyward_vesting_schedule": vec![
+                    VestingIntervalInput {
+                        start_timestamp: 0,
+                        end_timestamp: 1,
+                        amount: U128(SKYWARD_TOTAL_SUPPLY),
+                    },
+                ],
                 "listing_fee_near": U128::from(LISTING_FEE_NEAR),
+                "w_near_token_id": WRAP_NEAR_ID.to_string(),
             })
             .to_string()
             .into_bytes(),
@@ -128,7 +145,7 @@ impl Env {
             signer_account: skyward,
             deposit: to_yocto("10"),
             gas: BASE_GAS,
-            init_method: new(skyward_token.valid_account_id(), skyward.valid_account_id(), CLAIM_EXPIRATION_TIMESTAMP, TOTAL_LOCKUP_BALANCE.into())
+            init_method: new(skyward_token.valid_account_id(), skyward.valid_account_id(), CLAIM_EXPIRATION_TIMESTAMP)
         );
         // Registering tokens
         storage_deposit(&skyward_dao, SKYWARD_TOKEN_ID, SKYWARD_ID);
@@ -171,12 +188,12 @@ impl Env {
         }
     }
 
-    pub fn get_account(&self, user: &UserAccount, lockup_index: Option<u32>) -> Option<Account> {
+    pub fn get_account(&self, user: &UserAccount) -> Option<AccountOutput> {
         self.near
             .view_method_call(
                 self.skyward_claim
                     .contract
-                    .get_account(user.valid_account_id(), lockup_index),
+                    .get_account(user.valid_account_id()),
             )
             .unwrap_json()
     }
@@ -187,12 +204,8 @@ impl Env {
             .unwrap_json()
     }
 
-    pub fn claim(&self, user: &UserAccount, lockup_index: Option<u32>) -> ExecutionResult {
-        user.function_call(
-            self.skyward_claim.contract.claim(lockup_index),
-            CLAIM_GAS,
-            0,
-        )
+    pub fn claim(&self, user: &UserAccount) -> ExecutionResult {
+        user.function_call(self.skyward_claim.contract.claim(), CLAIM_GAS, 0)
     }
 
     pub fn get_skyward_token_balance(&self, user: &UserAccount) -> Balance {
@@ -211,10 +224,14 @@ impl Env {
         balance.unwrap().0
     }
 
-    pub fn get_treasury_skyward_supply(&self) -> Balance {
+    pub fn get_treasury_circulating_supply(&self) -> Balance {
         let balance: WrappedBalance = self
             .near
-            .view(SKYWARD_ID.to_string(), "get_skyward_total_supply", b"{}")
+            .view(
+                SKYWARD_ID.to_string(),
+                "get_skyward_circulating_supply",
+                b"{}",
+            )
             .unwrap_json();
         balance.0
     }
@@ -228,18 +245,9 @@ fn test_init() {
 #[test]
 fn test_initial_get_account() {
     let e = Env::init(3);
-    assert!(e.get_account(&e.users[0], None).is_none());
-    assert!(e
-        .near
-        .view_method_call(
-            e.skyward_claim
-                .contract
-                .get_account(e.users[0].valid_account_id(), Some(1)),
-        )
-        .is_err());
     assert_eq!(
-        e.get_account(&e.users[0], Some(0)),
-        Some(Account {
+        e.get_account(&e.users[0]),
+        Some(AccountOutput {
             start_timestamp: TIMESTAMP_1,
             cliff_timestamp: TIMESTAMP_1,
             end_timestamp: TIMESTAMP_2,
@@ -248,8 +256,8 @@ fn test_initial_get_account() {
         })
     );
     assert_eq!(
-        e.get_account(&e.users[1], Some(1)),
-        Some(Account {
+        e.get_account(&e.users[1]),
+        Some(AccountOutput {
             start_timestamp: TIMESTAMP_1,
             cliff_timestamp: TIMESTAMP_2,
             end_timestamp: TIMESTAMP_3,
@@ -257,15 +265,7 @@ fn test_initial_get_account() {
             claimed_balance: U128(0)
         })
     );
-    assert!(e
-        .near
-        .view_method_call(
-            e.skyward_claim
-                .contract
-                .get_account(e.users[2].valid_account_id(), Some(2)),
-        )
-        .is_err());
-    assert!(e.get_account(&e.users[2], None).is_none());
+    assert!(e.get_account(&e.users[2]).is_none());
 }
 
 #[test]
@@ -285,12 +285,9 @@ fn test_claim() {
             total_claimed: U128(0)
         }
     );
-    e.claim(&e.users[0], Some(0)).assert_success();
+    e.claim(&e.users[0]).assert_success();
     assert_eq!(e.get_skyward_token_balance(&e.users[0]), 0);
-    assert_eq!(
-        e.get_account(&e.users[0], None).unwrap().claimed_balance.0,
-        0
-    );
+    assert_eq!(e.get_account(&e.users[0]).unwrap().claimed_balance.0, 0);
     assert_eq!(
         e.get_stats(),
         Stats {
@@ -304,11 +301,8 @@ fn test_claim() {
     );
 
     assert_eq!(e.get_skyward_token_balance(&e.users[1]), 0);
-    e.claim(&e.users[1], Some(1)).assert_success();
-    assert_eq!(
-        e.get_account(&e.users[1], None).unwrap().claimed_balance.0,
-        0
-    );
+    e.claim(&e.users[1]).assert_success();
+    assert_eq!(e.get_account(&e.users[1]).unwrap().claimed_balance.0, 0);
     assert_eq!(
         e.get_stats(),
         Stats {
@@ -322,57 +316,54 @@ fn test_claim() {
     );
     assert_eq!(e.get_skyward_token_balance(&e.users[1]), 0);
 
-    e.claim(&e.users[1], None).assert_success();
-    assert!(!e.claim(&e.users[2], Some(2)).is_ok());
+    e.claim(&e.users[1]).assert_success();
+    assert!(!e.claim(&e.users[2]).is_ok());
 
     e.root.borrow_runtime_mut().cur_block.block_timestamp =
         to_nano((TIMESTAMP_2 - TIMESTAMP_1) / 2 + TIMESTAMP_1);
-    e.claim(&e.users[0], None).assert_success();
+    e.claim(&e.users[0]).assert_success();
     assert_eq!(
-        e.get_account(&e.users[0], None).unwrap().claimed_balance.0,
+        e.get_account(&e.users[0]).unwrap().claimed_balance.0,
         BALANCE_1 / 2
     );
     assert_eq!(e.get_stats().total_claimed.0, BALANCE_1 / 2);
     assert_eq!(e.get_skyward_token_balance(&e.users[0]), BALANCE_1 / 2);
 
-    e.claim(&e.users[1], None).assert_success();
-    assert_eq!(
-        e.get_account(&e.users[1], None).unwrap().claimed_balance.0,
-        0
-    );
+    e.claim(&e.users[1]).assert_success();
+    assert_eq!(e.get_account(&e.users[1]).unwrap().claimed_balance.0, 0);
     assert_eq!(e.get_stats().total_claimed.0, BALANCE_1 / 2);
     assert_eq!(e.get_skyward_token_balance(&e.users[1]), 0);
 
     e.root.borrow_runtime_mut().cur_block.block_timestamp =
         to_nano((TIMESTAMP_3 - TIMESTAMP_1) / 2 + TIMESTAMP_1);
-    e.claim(&e.users[0], None).assert_success();
+    e.claim(&e.users[0]).assert_success();
     assert_eq!(
-        e.get_account(&e.users[0], None).unwrap().claimed_balance.0,
+        e.get_account(&e.users[0]).unwrap().claimed_balance.0,
         BALANCE_1
     );
     assert_eq!(e.get_stats().total_claimed.0, BALANCE_1);
     assert_eq!(e.get_skyward_token_balance(&e.users[0]), BALANCE_1);
 
-    e.claim(&e.users[1], None).assert_success();
+    e.claim(&e.users[1]).assert_success();
     assert_eq!(
-        e.get_account(&e.users[1], None).unwrap().claimed_balance.0,
+        e.get_account(&e.users[1]).unwrap().claimed_balance.0,
         BALANCE_2 / 2
     );
     assert_eq!(e.get_stats().total_claimed.0, BALANCE_1 + BALANCE_2 / 2);
     assert_eq!(e.get_skyward_token_balance(&e.users[1]), BALANCE_2 / 2);
 
     e.root.borrow_runtime_mut().cur_block.block_timestamp = to_nano(TIMESTAMP_3 + 100);
-    e.claim(&e.users[0], None).assert_success();
+    e.claim(&e.users[0]).assert_success();
     assert_eq!(
-        e.get_account(&e.users[0], None).unwrap().claimed_balance.0,
+        e.get_account(&e.users[0]).unwrap().claimed_balance.0,
         BALANCE_1
     );
     assert_eq!(e.get_stats().total_claimed.0, BALANCE_1 + BALANCE_2 / 2);
     assert_eq!(e.get_skyward_token_balance(&e.users[0]), BALANCE_1);
 
-    e.claim(&e.users[1], None).assert_success();
+    e.claim(&e.users[1]).assert_success();
     assert_eq!(
-        e.get_account(&e.users[1], None).unwrap().claimed_balance.0,
+        e.get_account(&e.users[1]).unwrap().claimed_balance.0,
         BALANCE_2
     );
     assert_eq!(e.get_stats().total_claimed.0, TOTAL_LOCKUP_BALANCE);
@@ -384,12 +375,9 @@ fn test_miss_claim() {
     let e = Env::init(3);
     e.root.borrow_runtime_mut().genesis.block_prod_time = 0;
     e.root.borrow_runtime_mut().cur_block.block_timestamp = to_nano(TIMESTAMP_1 - 100);
-    assert_eq!(e.get_treasury_skyward_supply(), SKYWARD_TOTAL_SUPPLY);
-    e.claim(&e.users[1], Some(1)).assert_success();
-    assert_eq!(
-        e.get_account(&e.users[1], None).unwrap().claimed_balance.0,
-        0
-    );
+    assert_eq!(e.get_treasury_circulating_supply(), SKYWARD_TOTAL_SUPPLY);
+    e.claim(&e.users[1]).assert_success();
+    assert_eq!(e.get_account(&e.users[1]).unwrap().claimed_balance.0, 0);
     assert_eq!(
         e.get_stats(),
         Stats {
@@ -404,7 +392,7 @@ fn test_miss_claim() {
     e.root.borrow_runtime_mut().cur_block.block_timestamp = to_nano(CLAIM_EXPIRATION_TIMESTAMP + 1);
 
     // Too late to claim
-    assert!(!e.claim(&e.users[0], Some(0)).is_ok());
+    assert!(!e.claim(&e.users[0]).is_ok());
 
     assert_eq!(
         e.get_stats(),
@@ -446,7 +434,7 @@ fn test_miss_claim() {
         }
     );
     assert_eq!(
-        e.get_treasury_skyward_supply(),
+        e.get_treasury_circulating_supply(),
         SKYWARD_TOTAL_SUPPLY - BALANCE_1
     );
 }

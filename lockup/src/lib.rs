@@ -4,9 +4,10 @@ use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{ValidAccountId, WrappedBalance};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
-    env, log, near_bindgen, AccountId, Balance, BorshStorageKey, Gas, PanicOnDefault, Promise,
-    Timestamp,
+    env, log, near_bindgen, AccountId, Balance, BorshStorageKey, CryptoHash, Gas, PanicOnDefault,
+    Promise, Timestamp,
 };
+use std::cmp::Ordering;
 
 near_sdk::setup_alloc!();
 
@@ -18,13 +19,14 @@ pub(crate) enum StorageKey {
 pub type TimestampSec = u32;
 pub type TokenAccountId = AccountId;
 
+const CRYPTO_HASH_SIZE: usize = 32;
 const GAS_FOR_FT_TRANSFER: Gas = 10_000_000_000_000;
 const GAS_FOR_FT_TRANSFER_CALL: Gas = 50_000_000_000_000;
 const LOCKUP_DATA: &[u8] = include_bytes!("../data/accounts.borsh");
-const SIZE_OF_FIXED_SIZE_ACCOUNT: usize = 93;
+const SIZE_OF_FIXED_SIZE_ACCOUNT: usize = 60;
 const NUM_LOCKUP_ACCOUNTS: usize = LOCKUP_DATA.len() / SIZE_OF_FIXED_SIZE_ACCOUNT;
 
-const MAX_STORAGE_PER_ACCOUNT: u64 = 137;
+const MAX_STORAGE_PER_ACCOUNT: u64 = 121;
 const SELF_STORAGE: u64 = 1000;
 
 const ONE_YOCTO: Balance = 1;
@@ -35,18 +37,23 @@ uint::construct_uint! {
 
 #[derive(BorshDeserialize)]
 pub struct FixedSizeAccount {
-    pub account_len: u8,
-    pub account_id: [u8; 64],
+    pub account_hash: CryptoHash,
     pub start_timestamp: TimestampSec,
     pub cliff_timestamp: TimestampSec,
     pub end_timestamp: TimestampSec,
     pub balance: u128,
 }
 
-#[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct Account {
+    pub index: u32,
+    pub claimed_balance: Balance,
+}
+
+#[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct Account {
+pub struct AccountOutput {
     pub start_timestamp: TimestampSec,
     pub cliff_timestamp: TimestampSec,
     pub end_timestamp: TimestampSec,
@@ -96,9 +103,8 @@ impl Contract {
         token_account_id: ValidAccountId,
         skyward_account_id: ValidAccountId,
         claim_expiration_timestamp: TimestampSec,
-        total_balance: WrappedBalance,
     ) -> Self {
-        let total_balance = total_balance.into();
+        let total_balance = compute_total_balance();
         let required_storage_cost = Balance::from(
             env::storage_usage()
                 + SELF_STORAGE
@@ -116,37 +122,48 @@ impl Contract {
         }
     }
 
-    pub fn get_account(
-        &self,
-        account_id: ValidAccountId,
-        lockup_index: Option<u32>,
-    ) -> Option<Account> {
-        self.internal_get_accounts(account_id.as_ref(), lockup_index)
+    pub fn get_account(&self, account_id: ValidAccountId) -> Option<AccountOutput> {
+        self.internal_get_account(account_id.as_ref())
+            .map(|(account, fixed_size_account)| AccountOutput {
+                start_timestamp: fixed_size_account.start_timestamp,
+                cliff_timestamp: fixed_size_account.cliff_timestamp,
+                end_timestamp: fixed_size_account.end_timestamp,
+                balance: fixed_size_account.balance.into(),
+                claimed_balance: account.claimed_balance.into(),
+            })
     }
 
-    pub fn claim(&mut self, lockup_index: Option<u32>) {
+    pub fn claim(&mut self) {
         let account_id = env::predecessor_account_id();
-        let mut account = self
-            .internal_get_accounts(&account_id, lockup_index)
+        let (
+            mut account,
+            FixedSizeAccount {
+                start_timestamp,
+                cliff_timestamp,
+                end_timestamp,
+                balance,
+                ..
+            },
+        ) = self
+            .internal_get_account(&account_id)
             .expect("The claim is not found");
         let current_timestamp = env::block_timestamp();
-        let unlocked_balance: Balance = if current_timestamp < to_nano(account.cliff_timestamp) {
+        let unlocked_balance: Balance = if current_timestamp < to_nano(cliff_timestamp) {
             0
-        } else if current_timestamp >= to_nano(account.end_timestamp) {
-            account.balance.0
+        } else if current_timestamp >= to_nano(end_timestamp) {
+            balance
         } else {
-            let total_duration = to_nano(account.end_timestamp - account.start_timestamp);
-            let passed_duration = current_timestamp - to_nano(account.start_timestamp);
-            (U256::from(passed_duration) * U256::from(account.balance.0)
-                / U256::from(total_duration))
-            .as_u128()
+            let total_duration = to_nano(end_timestamp - start_timestamp);
+            let passed_duration = current_timestamp - to_nano(start_timestamp);
+            (U256::from(passed_duration) * U256::from(balance) / U256::from(total_duration))
+                .as_u128()
         };
-        let claim_balance = unlocked_balance - account.claimed_balance.0;
-        account.claimed_balance = unlocked_balance.into();
+        let claim_balance = unlocked_balance - account.claimed_balance;
+        account.claimed_balance = unlocked_balance;
         self.total_claimed += claim_balance;
         if self.accounts.insert(&account_id, &account).is_none() {
             // New claim, have to remove this from untouched balance.
-            self.untouched_balance -= account.balance.0;
+            self.untouched_balance -= balance;
         }
         if claim_balance > 0 {
             ext_fungible_token::ft_transfer(
@@ -206,47 +223,77 @@ impl Contract {
         Promise::new(self.skyward_account_id.clone()).transfer(unused_near_balance)
     }
 
-    fn internal_get_accounts(
-        &self,
-        account_id: &AccountId,
-        lockup_index: Option<u32>,
-    ) -> Option<Account> {
-        self.accounts.get(account_id).or_else(|| {
-            if env::block_timestamp() < to_nano(self.claim_expiration_timestamp) {
-                if let Some(lockup_index) = lockup_index {
-                    return Some(parse_lockup_account(account_id, lockup_index as usize));
+    fn internal_get_account(&self, account_id: &AccountId) -> Option<(Account, FixedSizeAccount)> {
+        self.accounts
+            .get(account_id)
+            .map(|account| {
+                let fixed_size_account = get_fixed_size_account(account.index as usize);
+                (account, fixed_size_account)
+            })
+            .or_else(|| {
+                if env::block_timestamp() < to_nano(self.claim_expiration_timestamp) {
+                    if let Some(index) = find_account(&account_id) {
+                        return Some((
+                            Account {
+                                index: index as u32,
+                                claimed_balance: 0,
+                            },
+                            get_fixed_size_account(index),
+                        ));
+                    }
                 }
-            }
-            None
-        })
+                None
+            })
     }
 }
 
-fn parse_lockup_account(expected_account_id: &AccountId, lockup_index: usize) -> Account {
-    assert!(lockup_index < NUM_LOCKUP_ACCOUNTS, "Invalid lockup index");
-    let FixedSizeAccount {
-        account_len,
-        account_id,
-        start_timestamp,
-        cliff_timestamp,
-        end_timestamp,
-        balance,
-    } = FixedSizeAccount::try_from_slice(
-        &LOCKUP_DATA[(lockup_index * SIZE_OF_FIXED_SIZE_ACCOUNT)
-            ..((lockup_index + 1) * SIZE_OF_FIXED_SIZE_ACCOUNT)],
-    )
-    .unwrap();
-    let account_id = AccountId::from_utf8(account_id[..account_len as usize].to_vec()).unwrap();
-    assert_eq!(expected_account_id, &account_id);
-    Account {
-        start_timestamp,
-        cliff_timestamp,
-        end_timestamp,
-        balance: balance.into(),
-        claimed_balance: 0.into(),
+fn hash_account(account_id: &AccountId) -> CryptoHash {
+    let value_hash = env::sha256(account_id.as_bytes());
+    let mut res = CryptoHash::default();
+    res.copy_from_slice(&value_hash);
+
+    res
+}
+
+fn find_account(expected_account_id: &AccountId) -> Option<usize> {
+    let expected_account_hash = hash_account(expected_account_id);
+    // Less or equal to expected_account_hash (inclusive)
+    let mut left = 0;
+    // Strictly greater than expected_account_hash
+    let mut right = NUM_LOCKUP_ACCOUNTS;
+    while left < right {
+        let mid = (left + right) / 2;
+        let account_hash = get_account_hash_at(mid);
+        match expected_account_hash.cmp(&account_hash) {
+            Ordering::Less => right = mid,
+            Ordering::Equal => return Some(mid),
+            Ordering::Greater => left = mid + 1,
+        }
     }
+    None
+}
+
+fn get_account_hash_at(index: usize) -> CryptoHash {
+    let offset = index * SIZE_OF_FIXED_SIZE_ACCOUNT;
+    let mut res = CryptoHash::default();
+    res.copy_from_slice(&LOCKUP_DATA[offset..offset + CRYPTO_HASH_SIZE]);
+    res
+}
+
+fn get_fixed_size_account(index: usize) -> FixedSizeAccount {
+    FixedSizeAccount::try_from_slice(
+        &LOCKUP_DATA
+            [(index * SIZE_OF_FIXED_SIZE_ACCOUNT)..((index + 1) * SIZE_OF_FIXED_SIZE_ACCOUNT)],
+    )
+    .unwrap()
 }
 
 fn to_nano(timestamp: TimestampSec) -> Timestamp {
     Timestamp::from(timestamp) * 10u64.pow(9)
+}
+
+fn compute_total_balance() -> Balance {
+    (0..NUM_LOCKUP_ACCOUNTS)
+        .map(|index| get_fixed_size_account(index).balance)
+        .sum()
 }

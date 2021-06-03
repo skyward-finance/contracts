@@ -2,8 +2,8 @@ use chrono::NaiveDate;
 use near_sdk::borsh::{self, BorshSerialize};
 use near_sdk::json_types::ValidAccountId;
 use near_sdk::serde::Deserialize;
-use near_sdk::AccountId;
-use std::collections::HashSet;
+use near_sdk::{AccountId, CryptoHash};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs::File;
 use std::io::Write;
@@ -20,8 +20,7 @@ struct Record {
 
 #[derive(BorshSerialize)]
 pub struct FixedSizeAccount {
-    pub account_len: u8,
-    pub account_id: [u8; 64],
+    pub account_hash: CryptoHash,
     pub start_timestamp: u32,
     pub cliff_timestamp: u32,
     pub end_timestamp: u32,
@@ -31,6 +30,16 @@ pub struct FixedSizeAccount {
 fn parse_date(s: &str) -> Option<u32> {
     let dt = NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()?;
     Some(dt.and_hms(0, 0, 0).timestamp() as u32)
+}
+
+fn hash_account(account_id: &AccountId) -> CryptoHash {
+    use sha2::Digest;
+
+    let value_hash = sha2::Sha256::digest(account_id.as_bytes());
+    let mut res = CryptoHash::default();
+    res.copy_from_slice(&value_hash);
+
+    res
 }
 
 pub fn main() {
@@ -60,7 +69,7 @@ pub fn main() {
     let mut data = vec![];
     let mut min_start_timestamp = u32::MAX;
     let mut max_end_timestamp = 0;
-    let mut unique_accounts = HashSet::new();
+    let mut accounts = BTreeMap::new();
     for result in rdr.deserialize() {
         let Record {
             account_id,
@@ -79,10 +88,7 @@ pub fn main() {
         assert!(balance > 0);
         min_start_timestamp = std::cmp::min(min_start_timestamp, start_timestamp);
         max_end_timestamp = std::cmp::max(max_end_timestamp, end_timestamp);
-        let account_len = account_id_str.len() as u8;
-        let mut account_id = [0u8; 64];
-        account_id[..account_id_str.len()].copy_from_slice(account_id_str.as_bytes());
-        assert!(unique_accounts.insert(account_id_str));
+        let account_hash = hash_account(&account_id_str);
         let balance = balance
             .checked_mul(balance_multiplier)
             .expect("Balance multiplication overflow");
@@ -90,14 +96,20 @@ pub fn main() {
         total_balance = total_balance
             .checked_add(balance)
             .expect("Total balance overflow");
+        println!(
+            "{:30} -> {} {} {} -> {}",
+            balance, start_timestamp, cliff_timestamp, end_timestamp, account_id_str
+        );
         let account = FixedSizeAccount {
-            account_len,
-            account_id,
+            account_hash,
             start_timestamp,
             cliff_timestamp,
             end_timestamp,
             balance,
         };
+        assert!(accounts.insert(account_hash, account).is_none());
+    }
+    for account in accounts.values() {
         data.extend(account.try_to_vec().unwrap());
     }
     println!("Total number of accounts {}\nTotal balance: {}\nTotal multiplied balance: {}\nMinimum start timestamp: {}\nMaximum end timestamp: {}",
