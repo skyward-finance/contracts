@@ -62,6 +62,21 @@ impl Subscription {
             })
             .collect()
     }
+
+    pub fn new(sale: &Sale, referral_id: Option<AccountId>) -> Self {
+        Self {
+            shares: 0,
+            spent_in_balance_without_shares: 0,
+            last_in_balance: 0,
+            last_out_token_per_share: sale
+                .out_tokens
+                .iter()
+                .map(|out_token| out_token.per_share.clone())
+                .collect(),
+            claimed_out_balance: vec![0; sale.out_tokens.len()],
+            referral_id,
+        }
+    }
 }
 
 impl Contract {
@@ -75,7 +90,7 @@ impl Contract {
         self.internal_distribute_unclaimed_tokens(&mut sale);
         let mut account = self.internal_unwrap_account(account_id);
         let mut subscription =
-            self.internal_update_subscription(&mut account, sale_id, &mut sale, None);
+            self.internal_update_subscription(&mut account, sale_id, &mut sale, None, false);
         let shares = shares.unwrap_or(subscription.shares);
         assert!(shares > 0, "{}", errors::ZERO_SHARES);
         assert!(
@@ -96,7 +111,7 @@ impl Contract {
 
         subscription.last_in_balance = sale.shares_to_in_balance(subscription.shares);
 
-        account.internal_save_subscription(sale_id, subscription);
+        account.internal_save_subscription(sale_id, &sale, subscription);
         self.accounts.insert(&account_id, &account.into());
         self.sales.insert(&sale_id, &sale.into());
     }
@@ -111,7 +126,7 @@ impl Contract {
         self.internal_distribute_unclaimed_tokens(&mut sale);
         let mut account = self.internal_unwrap_account(account_id);
         let mut subscription =
-            self.internal_update_subscription(&mut account, sale_id, &mut sale, None);
+            self.internal_update_subscription(&mut account, sale_id, &mut sale, None, false);
         assert!(in_amount > 0, "{}", errors::ZERO_IN_AMOUNT);
         let remaining_in_balance = sale.shares_to_in_balance(subscription.shares);
         assert!(
@@ -129,7 +144,7 @@ impl Contract {
 
         subscription.last_in_balance = sale.shares_to_in_balance(subscription.shares);
 
-        account.internal_save_subscription(sale_id, subscription);
+        account.internal_save_subscription(sale_id, &sale, subscription);
         self.accounts.insert(&account_id, &account.into());
         self.sales.insert(&sale_id, &sale.into());
     }
@@ -140,14 +155,29 @@ impl Contract {
         account_id: &AccountId,
         in_amount: Balance,
         referral_id: Option<&AccountId>,
-    ) {
+        passed_permission_check: bool,
+    ) -> Option<AccountId> {
         assert_ne!(referral_id, Some(account_id), "{}", errors::SELF_REFERRAL);
+        assert!(in_amount > 0, "{}", errors::ZERO_IN_AMOUNT);
         let mut sale = self.internal_unwrap_sale(sale_id);
         self.internal_distribute_unclaimed_tokens(&mut sale);
         let mut account = self.internal_unwrap_account(account_id);
-        let mut subscription =
-            self.internal_update_subscription(&mut account, sale_id, &mut sale, referral_id);
-        assert!(in_amount > 0, "{}", errors::ZERO_IN_AMOUNT);
+        if !passed_permission_check {
+            if let Some(permissions_contract_id) = &sale.permissions_contract_id {
+                if account.subs.get(&sale_id).is_none() {
+                    // Need to check permissions first
+                    return Some(permissions_contract_id.clone());
+                }
+            }
+        }
+
+        let mut subscription = self.internal_update_subscription(
+            &mut account,
+            sale_id,
+            &mut sale,
+            referral_id,
+            passed_permission_check,
+        );
 
         account.internal_token_withdraw(&sale.in_token_account_id, in_amount);
         for out_token in &sale.out_tokens {
@@ -163,8 +193,9 @@ impl Contract {
 
         subscription.last_in_balance = sale.shares_to_in_balance(subscription.shares);
 
-        account.internal_save_subscription(sale_id, subscription);
+        account.internal_save_subscription(sale_id, &sale, subscription);
         self.accounts.insert(&account_id, &account.into());
         self.sales.insert(&sale_id, &sale.into());
+        None
     }
 }

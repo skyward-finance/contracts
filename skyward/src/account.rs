@@ -58,29 +58,31 @@ impl Account {
         sale_id: u64,
         sale: &Sale,
         referral_id: Option<&AccountId>,
+        create_new: bool,
     ) -> (Subscription, Vec<Balance>) {
         let mut subscription: Subscription = self
             .subs
             .get(&sale_id)
             .map(|s| s.into())
-            .unwrap_or_else(|| Subscription {
-                shares: 0,
-                spent_in_balance_without_shares: 0,
-                last_in_balance: 0,
-                last_out_token_per_share: sale
-                    .out_tokens
-                    .iter()
-                    .map(|out_token| out_token.per_share.clone())
-                    .collect(),
-                claimed_out_balance: vec![0; sale.out_tokens.len()],
-                referral_id: referral_id.cloned(),
+            .unwrap_or_else(|| {
+                if create_new {
+                    Subscription::new(sale, referral_id.cloned())
+                } else {
+                    env::panic(errors::NO_PERMISSION.as_bytes())
+                }
             });
         let out_token_amounts = subscription.touch(sale);
         (subscription, out_token_amounts)
     }
 
-    pub fn internal_save_subscription(&mut self, sale_id: u64, subscription: Subscription) {
-        if subscription.shares == 0 {
+    pub fn internal_save_subscription(
+        &mut self,
+        sale_id: u64,
+        sale: &Sale,
+        subscription: Subscription,
+    ) {
+        if subscription.shares == 0 && (sale.permissions_contract_id.is_none() || sale.has_ended())
+        {
             self.subs.remove(&sale_id);
         } else {
             self.subs.insert(&sale_id, &subscription.into());
@@ -93,7 +95,7 @@ impl Account {
         sale: &Sale,
     ) -> Option<SubscriptionOutput> {
         let (subscription, out_token_remaining) =
-            self.internal_get_subscription(sale_id, sale, None);
+            self.internal_get_subscription(sale_id, sale, None, true);
         if subscription.shares > 0 || out_token_remaining.iter().any(|&v| v > 0) {
             let remaining_in_balance = sale.shares_to_in_balance(subscription.shares);
             Some(SubscriptionOutput {
@@ -142,9 +144,11 @@ impl Contract {
         sale_id: u64,
         sale: &mut Sale,
         referral_id: Option<&AccountId>,
+        passed_permission_check: bool,
     ) -> Subscription {
+        let create_new = passed_permission_check || sale.permissions_contract_id.is_none();
         let (mut subscription, out_token_amounts) =
-            account.internal_get_subscription(sale_id, &sale, referral_id);
+            account.internal_get_subscription(sale_id, &sale, referral_id, create_new);
         for (index, (mut amount, out_token)) in out_token_amounts
             .into_iter()
             .zip(sale.out_tokens.iter())

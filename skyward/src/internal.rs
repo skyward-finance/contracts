@@ -10,6 +10,11 @@ pub enum FtOnTransferArgs {
     DonateToTreasury,
 }
 
+#[ext_contract(ext_permission_contract)]
+trait ExtPermissionContract {
+    fn is_approved(&mut self, account_id: AccountId, sale_id: u64);
+}
+
 #[ext_contract(ext_self)]
 trait SelfCallbacks {
     fn after_ft_transfer(
@@ -20,6 +25,21 @@ trait SelfCallbacks {
     ) -> bool;
 
     fn after_near_deposit(&mut self, amount: WrappedBalance) -> bool;
+
+    fn after_is_approved(
+        &mut self,
+        sale_id: u64,
+        account_id: AccountId,
+        in_amount: WrappedBalance,
+        referral_id: Option<AccountId>,
+        attached_deposit: WrappedBalance,
+    );
+
+    fn maybe_refund_deposit(
+        &mut self,
+        account_id: AccountId,
+        attached_deposit: WrappedBalance,
+    ) -> bool;
 }
 
 trait SelfCallbacks {
@@ -31,6 +51,22 @@ trait SelfCallbacks {
     ) -> bool;
 
     fn after_near_deposit(&mut self, amount: WrappedBalance) -> bool;
+
+    fn after_is_approved(
+        &mut self,
+        is_approved: bool,
+        sale_id: u64,
+        account_id: AccountId,
+        in_amount: WrappedBalance,
+        referral_id: Option<AccountId>,
+        attached_deposit: WrappedBalance,
+    );
+
+    fn maybe_refund_deposit(
+        &mut self,
+        account_id: AccountId,
+        attached_deposit: WrappedBalance,
+    ) -> bool;
 }
 
 impl Contract {
@@ -93,6 +129,60 @@ impl SelfCallbacks for Contract {
             );
             let w_near_token_id = self.treasury.w_near_token_id.clone();
             self.treasury.internal_deposit(&w_near_token_id, amount.0);
+        }
+        promise_success
+    }
+
+    #[private]
+    fn after_is_approved(
+        &mut self,
+        #[callback] is_approved: bool,
+        sale_id: u64,
+        account_id: AccountId,
+        in_amount: WrappedBalance,
+        referral_id: Option<AccountId>,
+        attached_deposit: WrappedBalance,
+    ) {
+        assert!(is_approved, "{}", errors::NOT_APPROVED);
+        let initial_storage_usage = env::storage_usage();
+
+        assert!(self
+            .internal_deposit_in_amount(
+                sale_id,
+                &account_id,
+                in_amount.0,
+                referral_id.as_ref(),
+                true,
+            )
+            .is_none());
+
+        let attached_deposit = attached_deposit.0;
+        let required_cost =
+            env::storage_byte_cost() * Balance::from(env::storage_usage() - initial_storage_usage);
+        assert!(
+            required_cost <= attached_deposit,
+            "{} {}",
+            errors::NOT_ENOUGH_ATTACHED_BALANCE,
+            required_cost,
+        );
+
+        let refund = attached_deposit - required_cost;
+        if refund > 1 {
+            Promise::new(account_id).transfer(refund);
+        }
+        self.treasury.locked_attached_deposits -= attached_deposit;
+    }
+
+    #[private]
+    fn maybe_refund_deposit(
+        &mut self,
+        account_id: AccountId,
+        attached_deposit: WrappedBalance,
+    ) -> bool {
+        let promise_success = is_promise_success();
+        if !promise_success {
+            self.treasury.locked_attached_deposits -= attached_deposit.0;
+            Promise::new(account_id).transfer(attached_deposit.0);
         }
         promise_success
     }

@@ -10,7 +10,6 @@ const MIN_DURATION: Duration = 1;
 
 pub(crate) const MULTIPLIER: u128 = 10u128.pow(38);
 pub(crate) const TREASURY_FEE_DENOMINATOR: Balance = 100;
-pub(crate) const IN_SKYWARD_DENOMINATOR: Balance = 10;
 pub(crate) const MAX_NUM_OUT_TOKENS: usize = 4;
 pub(crate) const MAX_TITLE_LENGTH: usize = 250;
 pub(crate) const MAX_URL_LENGTH: usize = 250;
@@ -22,6 +21,7 @@ pub struct Sale {
 
     pub title: String,
     pub url: Option<String>,
+    pub permissions_contract_id: Option<AccountId>,
 
     pub out_tokens: Vec<SaleOutToken>,
 
@@ -35,8 +35,6 @@ pub struct Sale {
 
     pub total_shares: Balance,
     pub last_timestamp: Timestamp,
-
-    pub associated_sale_id: Option<u64>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Clone)]
@@ -72,6 +70,7 @@ impl From<VSale> for Sale {
 pub struct SaleInput {
     pub title: String,
     pub url: Option<String>,
+    pub permissions_contract_id: Option<ValidAccountId>,
 
     pub out_tokens: Vec<SaleInputOutToken>,
 
@@ -109,6 +108,7 @@ pub struct SaleOutput {
 
     pub title: String,
     pub url: Option<String>,
+    pub permissions_contract_id: Option<AccountId>,
 
     pub owner_id: AccountId,
 
@@ -124,8 +124,6 @@ pub struct SaleOutput {
     pub start_time: WrappedTimestamp,
     pub duration: WrappedDuration,
     pub remaining_duration: WrappedDuration,
-
-    pub associated_sale_id: Option<u64>,
 
     pub subscription: Option<SubscriptionOutput>,
 }
@@ -257,6 +255,7 @@ impl Sale {
             owner_id,
             title: sale.title,
             url: sale.url,
+            permissions_contract_id: sale.permissions_contract_id.map(|a| a.into()),
             out_tokens: sale
                 .out_tokens
                 .into_iter()
@@ -270,47 +269,6 @@ impl Sale {
             start_time,
             duration: sale.duration.into(),
             last_timestamp: start_time,
-            associated_sale_id: None,
-        }
-    }
-
-    pub fn spawn_in_skyward_sale(
-        &mut self,
-        sale_id: u64,
-        skyward_token_id: &TokenAccountId,
-    ) -> Option<Self> {
-        if &self.in_token_account_id == skyward_token_id {
-            return None;
-        }
-        let mut out_tokens = Vec::with_capacity(self.out_tokens.len());
-        for out_token in &mut self.out_tokens {
-            if &out_token.token_account_id == skyward_token_id {
-                continue;
-            }
-            let mut new_out_token = out_token.clone();
-            let in_skyward_balance = out_token.remaining / IN_SKYWARD_DENOMINATOR;
-            out_token.remaining -= in_skyward_balance;
-            new_out_token.remaining = in_skyward_balance;
-            out_tokens.push(new_out_token);
-        }
-        if out_tokens.is_empty() {
-            None
-        } else {
-            Some(Sale {
-                owner_id: self.owner_id.clone(),
-                title: self.title.clone(),
-                url: self.url.clone(),
-                out_tokens,
-                in_token_account_id: skyward_token_id.clone(),
-                in_token_remaining: 0,
-                in_token_paid_unclaimed: 0,
-                in_token_paid: 0,
-                start_time: self.start_time,
-                duration: self.duration,
-                total_shares: 0,
-                last_timestamp: self.last_timestamp,
-                associated_sale_id: Some(sale_id),
-            })
         }
     }
 
@@ -323,6 +281,7 @@ impl Sale {
             owner_id: self.owner_id,
             title: self.title,
             url: self.url,
+            permissions_contract_id: self.permissions_contract_id,
             out_tokens: self.out_tokens.into_iter().map(|o| o.into()).collect(),
             in_token_account_id: self.in_token_account_id,
             in_token_remaining: self.in_token_remaining.into(),
@@ -332,7 +291,6 @@ impl Sale {
             start_time: self.start_time.into(),
             duration: self.duration.into(),
             remaining_duration: remaining_duration.into(),
-            associated_sale_id: self.associated_sale_id,
             subscription,
         }
     }
@@ -432,7 +390,7 @@ impl Contract {
     pub fn sale_create(&mut self, sale: SaleInput) -> u64 {
         let initial_storage_usage = env::storage_usage();
         let sale_id = self.num_sales;
-        let mut sale = Sale::from_input(
+        let sale = Sale::from_input(
             sale,
             env::predecessor_account_id(),
             &self.treasury.skyward_token_id,
@@ -480,23 +438,6 @@ impl Contract {
             self.internal_maybe_register_token(&mut account, &sale.in_token_account_id);
             account.sales.insert(&sale_id);
 
-            // Creating 10% SKYWARD sale
-            if let Some(in_skyward_sale) =
-                sale.spawn_in_skyward_sale(sale_id, &self.treasury.skyward_token_id)
-            {
-                in_skyward_sale.assert_valid_not_started();
-                let in_skyward_sale_id = sale_id + 1;
-                // Maybe registering skyward token for the account
-                self.internal_maybe_register_token(
-                    &mut account,
-                    &in_skyward_sale.in_token_account_id,
-                );
-                account.sales.insert(&in_skyward_sale_id);
-                sale.associated_sale_id = Some(in_skyward_sale_id);
-                self.sales
-                    .insert(&in_skyward_sale_id, &in_skyward_sale.into());
-                self.num_sales += 1;
-            }
             self.accounts.insert(&sale.owner_id, &account.into());
             self.sales.insert(&sale_id, &sale.into());
             self.num_sales += 1;
@@ -540,13 +481,49 @@ impl Contract {
         assert_at_least_one_yocto();
         let initial_storage_usage = env::storage_usage();
         let account_id = env::predecessor_account_id();
-        self.internal_deposit_in_amount(
+
+        let referral_id = referral_id.map(|r| r.into());
+        let in_amount = amount.0;
+
+        let permissions_contract_id = self.internal_deposit_in_amount(
             sale_id,
             &account_id,
-            amount.0,
-            referral_id.map(|r| r.into()).as_ref(),
+            in_amount,
+            referral_id.as_ref(),
+            false,
         );
-        refund_extra_storage_deposit(env::storage_usage() - initial_storage_usage, 0);
+
+        if let Some(permissions_contract_id) = permissions_contract_id {
+            let attached_deposit = env::attached_deposit();
+            self.treasury.locked_attached_deposits += env::attached_deposit();
+            ext_permission_contract::is_approved(
+                account_id.clone(),
+                sale_id,
+                &permissions_contract_id,
+                NO_DEPOSIT,
+                PERMISSION_CONTRACT_GAS,
+            )
+            .then(ext_self::after_is_approved(
+                sale_id,
+                account_id.clone(),
+                in_amount.into(),
+                referral_id,
+                attached_deposit.into(),
+                &env::current_account_id(),
+                NO_DEPOSIT,
+                AFTER_IS_APPROVED_GAS,
+            ))
+            .then(ext_self::maybe_refund_deposit(
+                account_id.clone(),
+                attached_deposit.into(),
+                &env::current_account_id(),
+                NO_DEPOSIT,
+                MAYBE_REFUND_DEPOSIT_GAS,
+            ))
+            .as_return();
+        } else {
+            refund_extra_storage_deposit(env::storage_usage() - initial_storage_usage, 0);
+        }
     }
 
     #[payable]
@@ -581,9 +558,9 @@ impl Contract {
         self.internal_distribute_unclaimed_tokens(&mut sale);
         let mut account = self.internal_unwrap_account(&account_id);
         let subscription =
-            self.internal_update_subscription(&mut account, sale_id, &mut sale, None);
+            self.internal_update_subscription(&mut account, sale_id, &mut sale, None, false);
 
-        account.internal_save_subscription(sale_id, subscription);
+        account.internal_save_subscription(sale_id, &sale, subscription);
 
         self.accounts.insert(&account_id, &account.into());
         self.sales.insert(&sale_id, &sale.into());

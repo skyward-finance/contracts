@@ -28,3 +28,5 @@ pub(crate) const UNREGISTERED_TREASURY_TOKEN: &str = "ERR_UNREGISTERED_TREASURY_
 pub(crate) const INVALID_INITIAL_SKYWARD_SALE: &str = "ERR_INVALID_INITIAL_SKYWARD_SALE";
 pub(crate) const TOO_LONG_TITLE: &str = "ERR_TOO_LONG_TITLE";
 pub(crate) const TOO_LONG_URL: &str = "ERR_TOO_LONG_URL";
+pub(crate) const NO_PERMISSION: &str = "ERR_NO_PERMISSION";
+pub(crate) const NOT_APPROVED: &str = "ERR_NOT_APPROVED";

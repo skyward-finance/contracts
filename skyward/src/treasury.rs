@@ -40,6 +40,9 @@ pub struct Treasury {
     pub listing_fee_near: Balance,
 
     pub w_near_token_id: TokenAccountId,
+
+    // The amount of NEAR locked while the permissions are being verified.
+    pub locked_attached_deposits: Balance,
 }
 
 impl Treasury {
@@ -65,6 +68,7 @@ impl Treasury {
             ),
             listing_fee_near,
             w_near_token_id,
+            locked_attached_deposits: 0,
         }
     }
 
@@ -186,8 +190,9 @@ impl Contract {
     }
 
     pub fn wrap_extra_near(&mut self) -> Promise {
-        let unused_near_balance =
-            env::account_balance() - Balance::from(env::storage_usage()) * env::storage_byte_cost();
+        let unused_near_balance = env::account_balance()
+            - Balance::from(env::storage_usage()) * env::storage_byte_cost()
+            - self.treasury.locked_attached_deposits;
         assert!(
             unused_near_balance > MIN_EXTRA_NEAR,
             "{}",
