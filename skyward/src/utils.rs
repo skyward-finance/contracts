@@ -23,6 +23,7 @@ pub(crate) const AFTER_IS_APPROVED_GAS: Gas = BASE_GAS * 4;
 pub(crate) const MAYBE_REFUND_DEPOSIT_GAS: Gas = BASE_GAS * 2;
 
 pub type TimestampSec = u32;
+pub type BasicPoints = u16;
 
 uint::construct_uint! {
     pub struct U256(4);

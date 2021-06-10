@@ -13,6 +13,7 @@ pub(crate) const TREASURY_FEE_DENOMINATOR: Balance = 100;
 pub(crate) const MAX_NUM_OUT_TOKENS: usize = 4;
 pub(crate) const MAX_TITLE_LENGTH: usize = 250;
 pub(crate) const MAX_URL_LENGTH: usize = 250;
+pub(crate) const MAX_REFERRAL_BPT: u16 = 500;
 
 #[derive(BorshSerialize, BorshDeserialize)]
 #[borsh_init(touch)]
@@ -44,6 +45,7 @@ pub struct SaleOutToken {
     pub distributed: Balance,
     pub treasury_unclaimed: Option<Balance>,
     pub per_share: InnerU256,
+    pub referral_bpt: Option<BasicPoints>,
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -85,6 +87,7 @@ pub struct SaleInput {
 pub struct SaleInputOutToken {
     pub token_account_id: ValidAccountId,
     pub balance: WrappedBalance,
+    pub referral_bpt: Option<BasicPoints>,
 }
 
 impl SaleOutToken {
@@ -96,6 +99,7 @@ impl SaleOutToken {
             distributed: 0,
             treasury_unclaimed: if is_skyward_token { None } else { Some(0) },
             per_share: U256::zero().0,
+            referral_bpt: token.referral_bpt,
         }
     }
 }
@@ -136,6 +140,7 @@ pub struct SaleOutputOutToken {
     pub remaining: WrappedBalance,
     pub distributed: WrappedBalance,
     pub treasury_unclaimed: Option<WrappedBalance>,
+    pub referral_bpt: Option<BasicPoints>,
 }
 
 impl From<SaleOutToken> for SaleOutputOutToken {
@@ -145,6 +150,7 @@ impl From<SaleOutToken> for SaleOutputOutToken {
             remaining: token.remaining.into(),
             distributed: token.distributed.into(),
             treasury_unclaimed: token.treasury_unclaimed.map(|b| b.into()),
+            referral_bpt: token.referral_bpt,
         }
     }
 }
@@ -233,6 +239,13 @@ impl Sale {
                 "{}",
                 errors::SAME_TOKENS
             );
+            if let Some(referral_bpt) = out_token.referral_bpt {
+                assert!(
+                    referral_bpt <= MAX_REFERRAL_BPT,
+                    "{}",
+                    errors::MAX_REFERRAL_BPT
+                );
+            }
             unique_tokens.push(out_token.token_account_id.clone());
         }
         unique_tokens.sort();
@@ -374,11 +387,26 @@ impl Contract {
 
             sale.in_token_paid_unclaimed = 0;
         }
+        let sale_ended = sale.has_ended();
         for out_token in &mut sale.out_tokens {
             if let Some(treasury_unclaimed) = &mut out_token.treasury_unclaimed {
                 self.treasury
                     .internal_deposit(&out_token.token_account_id, *treasury_unclaimed);
                 *treasury_unclaimed = 0;
+            }
+            if sale_ended && out_token.remaining > 0 {
+                // No one subscribed at the end of the sale
+                if sale.owner_id == env::current_account_id() {
+                    self.treasury
+                        .internal_donate(&out_token.token_account_id, out_token.remaining);
+                } else {
+                    let mut account = self.internal_unwrap_account(&sale.owner_id);
+                    account
+                        .internal_token_deposit(&out_token.token_account_id, out_token.remaining);
+                    self.accounts.insert(&sale.owner_id, &account.into());
+                }
+                out_token.distributed += out_token.remaining;
+                out_token.remaining = 0;
             }
         }
     }

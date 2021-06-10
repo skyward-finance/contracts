@@ -4,7 +4,7 @@ use near_sdk::collections::{UnorderedMap, UnorderedSet};
 use near_sdk::json_types::{WrappedBalance, U128};
 use near_sdk::{assert_one_yocto, serde_json, PromiseOrValue};
 
-const REFERRAL_FEE_DENOMINATOR: Balance = 100;
+const REFERRAL_FEE_DENOMINATOR: u128 = 10000;
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct Account {
@@ -155,27 +155,34 @@ impl Contract {
             .enumerate()
         {
             if amount > 0 {
-                if &out_token.token_account_id == &self.treasury.skyward_token_id {
-                    // Skyward token that will be used for referral.
-                    let mut ref_amount = amount / REFERRAL_FEE_DENOMINATOR;
+                if let Some(referral_bpt) = out_token.referral_bpt {
+                    let mut ref_amount = (U256::from(amount) * U256::from(referral_bpt)
+                        / U256::from(REFERRAL_FEE_DENOMINATOR))
+                    .as_u128();
+                    let referral_id = subscription
+                        .referral_id
+                        .as_ref()
+                        .map(|referral_id| {
+                            ref_amount /= 2;
+                            referral_id
+                        })
+                        .unwrap_or(&sale.owner_id);
                     if ref_amount > 0 {
                         amount -= ref_amount;
-                        if let Some(referral_id) = &subscription.referral_id {
-                            if let Some(referral) = self.accounts.get(referral_id) {
-                                let mut referral: Account = referral.into();
-                                if referral.balances.get(&out_token.token_account_id).is_some() {
-                                    referral.internal_token_deposit(
-                                        &out_token.token_account_id,
-                                        ref_amount,
-                                    );
-                                    ref_amount = 0;
-                                    self.accounts.insert(referral_id, &referral.into());
-                                }
+                        if let Some(referral) = self.accounts.get(referral_id) {
+                            let mut referral: Account = referral.into();
+                            if referral.balances.get(&out_token.token_account_id).is_some() {
+                                referral.internal_token_deposit(
+                                    &out_token.token_account_id,
+                                    ref_amount,
+                                );
+                                ref_amount = 0;
+                                self.accounts.insert(referral_id, &referral.into());
                             }
                         }
                         if ref_amount > 0 {
-                            // Invalid referral_id. Burning instead
-                            self.treasury.skyward_burned_amount += ref_amount;
+                            self.treasury
+                                .internal_donate(&out_token.token_account_id, ref_amount);
                         }
                     }
                 }

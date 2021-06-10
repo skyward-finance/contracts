@@ -30,3 +30,4 @@ pub(crate) const TOO_LONG_TITLE: &str = "ERR_TOO_LONG_TITLE";
 pub(crate) const TOO_LONG_URL: &str = "ERR_TOO_LONG_URL";
 pub(crate) const NO_PERMISSION: &str = "ERR_NO_PERMISSION";
 pub(crate) const NOT_APPROVED: &str = "ERR_NOT_APPROVED";
+pub(crate) const MAX_REFERRAL_BPT: &str = "ERR_MAX_REFERRAL_BPT";
