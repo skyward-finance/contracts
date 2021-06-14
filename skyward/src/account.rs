@@ -110,6 +110,7 @@ impl Account {
                     .map(|b| b.into())
                     .collect(),
                 shares: subscription.shares.into(),
+                referral_id: subscription.referral_id,
             })
         } else {
             None

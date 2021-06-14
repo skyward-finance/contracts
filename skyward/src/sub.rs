@@ -39,6 +39,7 @@ pub struct SubscriptionOutput {
     pub unclaimed_out_balances: Vec<WrappedBalance>,
     pub claimed_out_balance: Vec<WrappedBalance>,
     pub shares: WrappedBalance,
+    pub referral_id: Option<AccountId>,
 }
 
 impl Subscription {

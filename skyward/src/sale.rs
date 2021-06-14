@@ -203,7 +203,8 @@ impl Sale {
     pub fn assert_valid_not_started(&self) {
         let timestamp = env::block_timestamp();
         assert!(
-            self.start_time >= timestamp + MIN_DURATION_BEFORE_START,
+            &self.owner_id == &env::current_account_id()
+                || self.start_time >= timestamp + MIN_DURATION_BEFORE_START,
             "{}",
             errors::STARTS_TOO_SOON
         );
