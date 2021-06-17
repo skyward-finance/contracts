@@ -500,6 +500,19 @@ impl Contract {
             .collect()
     }
 
+    pub fn get_sales_by_id(
+        &self,
+        account_id: Option<ValidAccountId>,
+        sale_ids: Vec<u64>,
+    ) -> Vec<SaleOutput> {
+        let account: Option<Account> = account_id
+            .and_then(|account_id| self.accounts.get(account_id.as_ref()).map(|a| a.into()));
+        sale_ids
+            .into_iter()
+            .filter_map(|sale_id| self.internal_get_sale(sale_id, account.as_ref()))
+            .collect()
+    }
+
     #[payable]
     pub fn sale_deposit_in_token(
         &mut self,
