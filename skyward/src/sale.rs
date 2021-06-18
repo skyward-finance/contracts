@@ -1,6 +1,6 @@
 use crate::*;
 use near_sdk::json_types::{WrappedBalance, WrappedDuration, WrappedTimestamp};
-use near_sdk::{assert_one_yocto, Duration, Timestamp};
+use near_sdk::{assert_one_yocto, BlockHeight, Duration, Timestamp};
 
 const MIN_DURATION_BEFORE_START: Duration = 7 * 24 * 60 * 60 * 1_000_000_000;
 const MAX_DURATION_BEFORE_START: Duration = 365 * 24 * 60 * 60 * 1_000_000_000;
@@ -14,6 +14,28 @@ pub(crate) const MAX_NUM_OUT_TOKENS: usize = 4;
 pub(crate) const MAX_TITLE_LENGTH: usize = 250;
 pub(crate) const MAX_URL_LENGTH: usize = 250;
 pub(crate) const MAX_REFERRAL_BPT: u16 = 500;
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct OldSale {
+    pub owner_id: AccountId,
+
+    pub title: String,
+    pub url: Option<String>,
+    pub permissions_contract_id: Option<AccountId>,
+
+    pub out_tokens: Vec<SaleOutToken>,
+
+    pub in_token_account_id: AccountId,
+    pub in_token_remaining: Balance,
+    pub in_token_paid_unclaimed: Balance,
+    pub in_token_paid: Balance,
+
+    pub start_time: Timestamp,
+    pub duration: Duration,
+
+    pub total_shares: Balance,
+    pub last_timestamp: Timestamp,
+}
 
 #[derive(BorshSerialize, BorshDeserialize)]
 #[borsh_init(touch)]
@@ -36,6 +58,9 @@ pub struct Sale {
 
     pub total_shares: Balance,
     pub last_timestamp: Timestamp,
+
+    pub start_block_height: BlockHeight,
+    pub end_block_height: Option<BlockHeight>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Clone)]
@@ -50,6 +75,7 @@ pub struct SaleOutToken {
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub enum VSale {
+    First(OldSale),
     Current(Sale),
 }
 
@@ -62,6 +88,27 @@ impl From<Sale> for VSale {
 impl From<VSale> for Sale {
     fn from(v_sale: VSale) -> Self {
         match v_sale {
+            VSale::First(old_sale) => {
+                let mut sale = Sale {
+                    owner_id: old_sale.owner_id,
+                    title: old_sale.title,
+                    url: old_sale.url,
+                    permissions_contract_id: old_sale.permissions_contract_id,
+                    out_tokens: old_sale.out_tokens,
+                    in_token_account_id: old_sale.in_token_account_id,
+                    in_token_remaining: old_sale.in_token_remaining,
+                    in_token_paid_unclaimed: old_sale.in_token_paid_unclaimed,
+                    in_token_paid: old_sale.in_token_paid,
+                    start_time: old_sale.start_time,
+                    duration: old_sale.duration,
+                    total_shares: old_sale.total_shares,
+                    last_timestamp: old_sale.last_timestamp,
+                    start_block_height: 0,
+                    end_block_height: None,
+                };
+                sale.touch();
+                sale
+            }
             VSale::Current(sale) => sale,
         }
     }
@@ -130,6 +177,11 @@ pub struct SaleOutput {
     pub remaining_duration: WrappedDuration,
 
     pub subscription: Option<SubscriptionOutput>,
+
+    pub current_time: WrappedTimestamp,
+    pub current_block_height: BlockHeight,
+    pub start_block_height: BlockHeight,
+    pub end_block_height: Option<BlockHeight>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -166,6 +218,9 @@ impl Sale {
         if self.last_timestamp >= end_time {
             // Sale closed
             return;
+        }
+        if timestamp >= end_time {
+            self.end_block_height = Some(env::block_index());
         }
         if self.total_shares == 0 {
             self.last_timestamp = timestamp;
@@ -283,6 +338,8 @@ impl Sale {
             start_time,
             duration: sale.duration.into(),
             last_timestamp: start_time,
+            start_block_height: env::block_index(),
+            end_block_height: None,
         }
     }
 
@@ -306,6 +363,10 @@ impl Sale {
             duration: self.duration.into(),
             remaining_duration: remaining_duration.into(),
             subscription,
+            current_time: env::block_timestamp().into(),
+            current_block_height: env::block_index(),
+            start_block_height: self.start_block_height,
+            end_block_height: self.end_block_height,
         }
     }
 
