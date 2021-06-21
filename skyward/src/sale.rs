@@ -153,7 +153,7 @@ impl SaleOutToken {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq, Clone))]
 pub struct SaleOutput {
     pub sale_id: u64,
 
@@ -186,7 +186,7 @@ pub struct SaleOutput {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq, Clone))]
 pub struct SaleOutputOutToken {
     pub token_account_id: TokenAccountId,
     pub remaining: WrappedBalance,

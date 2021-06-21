@@ -45,6 +45,26 @@ const DEFAULT_TOTAL_SUPPLY: Balance = 1_000_000_000 * ONE_NEAR;
 
 const BLOCK_DURATION: u64 = 1_000_000_000;
 
+#[derive(Debug, PartialEq)]
+pub struct PartialSale {
+    pub out_tokens: Vec<PartialOutToken>,
+
+    pub in_token_remaining: WrappedBalance,
+    pub in_token_paid_unclaimed: WrappedBalance,
+    pub in_token_paid: WrappedBalance,
+
+    pub total_shares: WrappedBalance,
+
+    pub subscription: Option<SubscriptionOutput>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct PartialOutToken {
+    pub remaining: WrappedBalance,
+    pub distributed: WrappedBalance,
+    pub treasury_unclaimed: Option<WrappedBalance>,
+}
+
 pub struct Env {
     pub root: UserAccount,
     pub near: UserAccount,
@@ -387,6 +407,33 @@ impl Env {
             .unwrap_json();
         balance.0
     }
+
+    pub fn assert_sale_eq(&self, sale: &SaleOutput, expected: PartialSale) {
+        assert_eq!(
+            sale,
+            &SaleOutput {
+                out_tokens: expected
+                    .out_tokens
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, out_token)| {
+                        SaleOutputOutToken {
+                            remaining: out_token.remaining,
+                            distributed: out_token.distributed,
+                            treasury_unclaimed: out_token.treasury_unclaimed,
+                            ..(sale.out_tokens[index].clone())
+                        }
+                    })
+                    .collect(),
+                in_token_remaining: expected.in_token_remaining,
+                in_token_paid_unclaimed: expected.in_token_paid_unclaimed,
+                in_token_paid: expected.in_token_paid,
+                total_shares: expected.total_shares,
+                subscription: expected.subscription,
+                ..(sale.clone())
+            }
+        );
+    }
 }
 
 #[test]
@@ -554,29 +601,32 @@ fn test_create_sale() {
     assert_eq!(
         sale,
         SaleOutput {
+            sale_id: 0,
             title: TITLE.to_string(),
             url: None,
             permissions_contract_id: None,
-
-            sale_id: 0,
             owner_id: alice.account_id.clone(),
             out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: None,
                 token_account_id: token1.account_id.clone(),
                 remaining: to_yocto("4000").into(),
                 distributed: 0.into(),
                 treasury_unclaimed: Some(0.into()),
+                referral_bpt: None
             }],
             in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: U128(0),
             in_token_paid_unclaimed: U128(0),
             in_token_paid: U128(0),
             total_shares: U128(0),
-            start_time: sale.start_time,
-            duration: sale.duration.clone(),
-            remaining_duration: sale.duration.clone(),
+            start_time: (to_nano(GENESIS_TIME + WEEK) + BLOCK_DURATION * 15).into(),
+            duration: (BLOCK_DURATION * 60).into(),
+            remaining_duration: (BLOCK_DURATION * 60).into(),
             subscription: None,
-        }
+            current_time: to_nano(GENESIS_TIME).into(),
+            current_block_height: alice.borrow_runtime().current_block().block_height,
+            start_block_height: sale.start_block_height,
+            end_block_height: None
+        },
     );
 
     assert_eq!(
@@ -619,6 +669,7 @@ fn test_join_sale() {
             remaining_in_balance: to_yocto("4").into(),
             unclaimed_out_balances: vec![U128(0)],
             shares: to_yocto("4").into(),
+            referral_id: None
         })
     );
 
@@ -633,76 +684,54 @@ fn test_join_sale() {
     e.near.borrow_runtime_mut().cur_block.block_timestamp = sale.start_time.0 + sale.duration.0 / 2;
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-            sale_id: 0,
-            owner_id: alice.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: None,
-                token_account_id: token1.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: to_yocto("1800").into(),
                 distributed: to_yocto("1800").into(),
                 treasury_unclaimed: Some(to_yocto("18").into()),
-            },],
-            in_token_account_id: e.w_near.account_id.clone(),
+            }],
             in_token_remaining: to_yocto("2").into(),
             in_token_paid_unclaimed: to_yocto("2").into(),
             in_token_paid: to_yocto("2").into(),
             total_shares: to_yocto("4").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: (sale.duration.0 / 2).into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("2").into(),
                 remaining_in_balance: to_yocto("2").into(),
                 unclaimed_out_balances: vec![to_yocto("1782").into()],
                 shares: to_yocto("4").into(),
+                referral_id: None,
             }),
-        }
+        },
     );
 
     e.near.borrow_runtime_mut().cur_block.block_timestamp = sale.start_time.0 + sale.duration.0;
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
 
-            sale_id: 0,
-            owner_id: alice.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: None,
-                token_account_id: token1.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: to_yocto("3600").into(),
                 treasury_unclaimed: Some(to_yocto("36").into()),
-            },],
-            in_token_account_id: e.w_near.account_id.clone(),
+            }],
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("4").into(),
             in_token_paid: to_yocto("4").into(),
             total_shares: to_yocto("4").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("4").into(),
                 remaining_in_balance: to_yocto("0").into(),
                 unclaimed_out_balances: vec![to_yocto("3564").into()],
                 shares: to_yocto("4").into(),
+                referral_id: None,
             }),
-        }
+        },
     );
 
     assert_eq!(
@@ -744,72 +773,49 @@ fn test_join_sale() {
     );
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
 
-            sale_id: 0,
-            owner_id: alice.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: None,
-                token_account_id: token1.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: to_yocto("3600").into(),
                 treasury_unclaimed: Some(0.into()),
-            },],
-            in_token_account_id: e.w_near.account_id.clone(),
+            }],
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("4").into(),
             total_shares: to_yocto("4").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("4").into(),
                 remaining_in_balance: to_yocto("0").into(),
                 unclaimed_out_balances: vec![to_yocto("3564").into()],
                 shares: to_yocto("4").into(),
+                referral_id: None,
             }),
-        }
+        },
     );
 
     bob.function_call(e.skyward.contract.sale_claim_out_tokens(0), BASE_GAS, 0)
         .assert_success();
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
 
-            sale_id: 0,
-            owner_id: alice.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: None,
-                token_account_id: token1.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: to_yocto("3600").into(),
                 treasury_unclaimed: Some(0.into()),
-            },],
-            in_token_account_id: e.w_near.account_id.clone(),
+            }],
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("4").into(),
             total_shares: to_yocto("0").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: None,
-        }
+        },
     );
 
     assert_eq!(
@@ -861,39 +867,27 @@ fn test_join_sale_with_referral() {
     .assert_success();
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: sale_amount.into(),
                 distributed: 0.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("4").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("0").into(),
             total_shares: to_yocto("4").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: sale.duration.clone(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("0").into(),
                 remaining_in_balance: to_yocto("4").into(),
                 unclaimed_out_balances: vec![U128(0)],
                 shares: to_yocto("4").into(),
+                referral_id: Some(alice.account_id.clone()),
             }),
-        }
+        },
     );
 
     assert_eq!(
@@ -914,78 +908,53 @@ fn test_join_sale_with_referral() {
     e.near.borrow_runtime_mut().cur_block.block_timestamp = sale.start_time.0 + sale.duration.0 / 2;
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: (sale_amount / 2).into(),
                 distributed: (sale_amount / 2).into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("2").into(),
             in_token_paid_unclaimed: to_yocto("2").into(),
             in_token_paid: to_yocto("2").into(),
             total_shares: to_yocto("4").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: (sale.duration.0 / 2).into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("2").into(),
                 remaining_in_balance: to_yocto("2").into(),
                 unclaimed_out_balances: vec![(sale_amount / 2).into()],
                 shares: to_yocto("4").into(),
+                referral_id: Some(alice.account_id.clone()),
             }),
-        }
+        },
     );
 
     e.near.borrow_runtime_mut().cur_block.block_timestamp = sale.start_time.0 + sale.duration.0;
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: sale_amount.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("4").into(),
             in_token_paid: to_yocto("4").into(),
             total_shares: to_yocto("4").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("4").into(),
                 remaining_in_balance: to_yocto("0").into(),
                 unclaimed_out_balances: vec![sale_amount.into()],
                 shares: to_yocto("4").into(),
+                referral_id: Some(alice.account_id.clone()),
             }),
-        }
+        },
     );
 
     assert_eq!(
@@ -1029,73 +998,47 @@ fn test_join_sale_with_referral() {
     );
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: sale_amount.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("4").into(),
             total_shares: to_yocto("4").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("4").into(),
                 remaining_in_balance: to_yocto("0").into(),
                 unclaimed_out_balances: vec![sale_amount.into()],
                 shares: to_yocto("4").into(),
+                referral_id: Some(alice.account_id.clone()),
             }),
-        }
+        },
     );
 
     bob.function_call(e.skyward.contract.sale_claim_out_tokens(0), BASE_GAS, 0)
         .assert_success();
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: sale_amount.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("4").into(),
             total_shares: to_yocto("0").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: None,
-        }
+        },
     );
 
     assert_eq!(
@@ -1164,39 +1107,27 @@ fn test_join_sale_with_referral_and_alice() {
         .assert_success();
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: sale_amount.into(),
                 distributed: 0.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("5").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("0").into(),
             total_shares: to_yocto("5").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: sale.duration.clone(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("0").into(),
                 remaining_in_balance: to_yocto("4").into(),
                 unclaimed_out_balances: vec![U128(0)],
                 shares: to_yocto("4").into(),
+                referral_id: Some(alice.account_id.clone()),
             }),
-        }
+        },
     );
 
     assert_eq!(
@@ -1207,6 +1138,7 @@ fn test_join_sale_with_referral_and_alice() {
             remaining_in_balance: to_yocto("1").into(),
             unclaimed_out_balances: vec![U128(0)],
             shares: to_yocto("1").into(),
+            referral_id: None
         }),
     );
 
@@ -1228,40 +1160,29 @@ fn test_join_sale_with_referral_and_alice() {
     e.near.borrow_runtime_mut().cur_block.block_timestamp = sale.start_time.0 + sale.duration.0 / 2;
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: (sale_amount / 2).into(),
                 distributed: (sale_amount / 2).into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("2.5").into(),
             in_token_paid_unclaimed: to_yocto("2.5").into(),
             in_token_paid: to_yocto("2.5").into(),
             total_shares: to_yocto("5").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: (sale.duration.0 / 2).into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("2").into(),
                 remaining_in_balance: to_yocto("2").into(),
                 unclaimed_out_balances: vec![(sale_amount / 5 * 4 / 2).into()],
                 shares: to_yocto("4").into(),
+                referral_id: Some(alice.account_id.clone()),
             }),
-        }
+        },
     );
+
     assert_eq!(
         e.get_sale(0, Some(alice.valid_account_id())).subscription,
         Some(SubscriptionOutput {
@@ -1270,47 +1191,36 @@ fn test_join_sale_with_referral_and_alice() {
             remaining_in_balance: to_yocto("0.5").into(),
             unclaimed_out_balances: vec![(sale_amount / 5 * 1 / 2).into()],
             shares: to_yocto("1").into(),
+            referral_id: None
         }),
     );
 
     e.near.borrow_runtime_mut().cur_block.block_timestamp = sale.start_time.0 + sale.duration.0;
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: sale_amount.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("5").into(),
             in_token_paid: to_yocto("5").into(),
             total_shares: to_yocto("5").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("4").into(),
                 remaining_in_balance: 0.into(),
                 unclaimed_out_balances: vec![(sale_amount / 5 * 4).into()],
                 shares: to_yocto("4").into(),
+                referral_id: Some(alice.account_id.clone()),
             }),
-        }
+        },
     );
+
     assert_eq!(
         e.get_sale(0, Some(alice.valid_account_id())).subscription,
         Some(SubscriptionOutput {
@@ -1319,6 +1229,7 @@ fn test_join_sale_with_referral_and_alice() {
             remaining_in_balance: 0.into(),
             unclaimed_out_balances: vec![(sale_amount / 5).into()],
             shares: to_yocto("1").into(),
+            referral_id: None
         }),
     );
 
@@ -1364,41 +1275,29 @@ fn test_join_sale_with_referral_and_alice() {
     );
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: sale_amount.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("5").into(),
             total_shares: to_yocto("5").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("4").into(),
                 remaining_in_balance: to_yocto("0").into(),
                 unclaimed_out_balances: vec![(sale_amount / 5 * 4).into()],
                 shares: to_yocto("4").into(),
+                referral_id: Some(alice.account_id.clone()),
             }),
-        }
+        },
     );
+
     assert_eq!(
         e.get_sale(0, Some(alice.valid_account_id())).subscription,
         Some(SubscriptionOutput {
@@ -1407,6 +1306,7 @@ fn test_join_sale_with_referral_and_alice() {
             remaining_in_balance: 0.into(),
             unclaimed_out_balances: vec![(sale_amount / 5).into()],
             shares: to_yocto("1").into(),
+            referral_id: None
         }),
     );
 
@@ -1416,34 +1316,22 @@ fn test_join_sale_with_referral_and_alice() {
         .assert_success();
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: sale_amount.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("5").into(),
             total_shares: to_yocto("1").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: None,
-        }
+        },
     );
+
     assert_eq!(
         e.get_sale(0, Some(alice.valid_account_id())).subscription,
         Some(SubscriptionOutput {
@@ -1452,6 +1340,7 @@ fn test_join_sale_with_referral_and_alice() {
             remaining_in_balance: 0.into(),
             unclaimed_out_balances: vec![(sale_amount / 5).into()],
             shares: to_yocto("1").into(),
+            referral_id: None
         }),
     );
 
@@ -1486,33 +1375,36 @@ fn test_join_sale_with_referral_and_alice() {
         .assert_success();
 
     let alice_sale = e.get_sale(0, Some(alice.valid_account_id()));
-    assert_eq!(
-        alice_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &alice_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: sale_amount.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("5").into(),
             total_shares: to_yocto("0").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: None,
-        }
+        },
+    );
+
+    e.assert_sale_eq(
+        &alice_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
+                remaining: 0.into(),
+                distributed: sale_amount.into(),
+                treasury_unclaimed: None,
+            }],
+            in_token_remaining: to_yocto("0").into(),
+            in_token_paid_unclaimed: to_yocto("0").into(),
+            in_token_paid: to_yocto("5").into(),
+            total_shares: to_yocto("0").into(),
+            subscription: None,
+        },
     );
 
     assert_eq!(e.skyward_circulating_supply(), SKYWARD_TOTAL_SUPPLY);
@@ -1578,39 +1470,27 @@ fn test_join_sale_and_leave() {
         .assert_success();
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: sale_amount.into(),
                 distributed: 0.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("5").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("0").into(),
             total_shares: to_yocto("5").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: sale.duration.clone(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("0").into(),
                 remaining_in_balance: to_yocto("4").into(),
                 unclaimed_out_balances: vec![U128(0)],
                 shares: to_yocto("4").into(),
+                referral_id: Some(alice.account_id.clone()),
             }),
-        }
+        },
     );
 
     assert_eq!(
@@ -1621,6 +1501,7 @@ fn test_join_sale_and_leave() {
             remaining_in_balance: to_yocto("1").into(),
             unclaimed_out_balances: vec![U128(0)],
             shares: to_yocto("1").into(),
+            referral_id: None
         }),
     );
 
@@ -1645,40 +1526,29 @@ fn test_join_sale_and_leave() {
     }
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: (sale_amount / 2).into(),
                 distributed: (sale_amount / 2).into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("2.5").into(),
             in_token_paid_unclaimed: to_yocto("2.5").into(),
             in_token_paid: to_yocto("2.5").into(),
             total_shares: to_yocto("5").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: (sale.duration.0 / 2).into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("2").into(),
                 remaining_in_balance: to_yocto("2").into(),
                 unclaimed_out_balances: vec![(sale_amount / 5 * 4 / 2).into()],
                 shares: to_yocto("4").into(),
+                referral_id: Some(alice.account_id.clone()),
             }),
-        }
+        },
     );
+
     assert_eq!(
         e.get_sale(0, Some(alice.valid_account_id())).subscription,
         Some(SubscriptionOutput {
@@ -1687,6 +1557,7 @@ fn test_join_sale_and_leave() {
             remaining_in_balance: to_yocto("0.5").into(),
             unclaimed_out_balances: vec![(sale_amount / 5 * 1 / 2).into()],
             shares: to_yocto("1").into(),
+            referral_id: None
         }),
     );
 
@@ -1718,40 +1589,27 @@ fn test_join_sale_and_leave() {
     e.near.borrow_runtime_mut().cur_block.block_timestamp = sale.start_time.0 + sale.duration.0;
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: sale_amount.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("2").into(),
             in_token_paid: to_yocto("4.5").into(),
             total_shares: to_yocto("4").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("4").into(),
                 remaining_in_balance: 0.into(),
                 unclaimed_out_balances: vec![(sale_amount * 9 / 10).into()],
                 shares: to_yocto("4").into(),
+                referral_id: Some(alice.account_id.clone()),
             }),
-        }
+        },
     );
 
     assert_eq!(
@@ -1803,73 +1661,47 @@ fn test_join_sale_and_leave() {
     );
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: sale_amount.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("4.5").into(),
             total_shares: to_yocto("4").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("4").into(),
                 remaining_in_balance: to_yocto("0").into(),
                 unclaimed_out_balances: vec![(sale_amount * 9 / 10).into()],
                 shares: to_yocto("4").into(),
+                referral_id: Some(alice.account_id.clone()),
             }),
-        }
+        },
     );
 
     bob.function_call(e.skyward.contract.sale_claim_out_tokens(0), BASE_GAS, 0)
         .assert_success();
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward_dao.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: sale_amount.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("4.5").into(),
             total_shares: to_yocto("0").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: None,
-        }
+        },
     );
 
     assert_eq!(
@@ -2006,39 +1838,27 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
     .assert_success();
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward.user_account.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: sale_amount.into(),
                 distributed: 0.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("4").into(),
             in_token_paid_unclaimed: 0.into(),
             in_token_paid: to_yocto("0").into(),
             total_shares: to_yocto("4").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: sale.duration.clone(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("0").into(),
                 remaining_in_balance: to_yocto("4").into(),
                 unclaimed_out_balances: vec![U128(0)],
                 shares: to_yocto("4").into(),
-            })
-        }
+                referral_id: None,
+            }),
+        },
     );
 
     assert_eq!(
@@ -2052,39 +1872,27 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
     e.near.borrow_runtime_mut().cur_block.block_timestamp = sale.start_time.0 + sale.duration.0 / 4;
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward.user_account.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: (sale_amount / 4 * 3).into(),
                 distributed: (sale_amount / 4).into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("3").into(),
             in_token_paid_unclaimed: to_yocto("1").into(),
             in_token_paid: to_yocto("1").into(),
             total_shares: to_yocto("4").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: (sale.duration.0 * 3 / 4).into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![0.into()],
                 spent_in_balance: to_yocto("1").into(),
                 remaining_in_balance: to_yocto("3").into(),
                 unclaimed_out_balances: vec![(sale_amount / 4).into()],
                 shares: to_yocto("4").into(),
+                referral_id: None,
             }),
-        }
+        },
     );
 
     assert_eq!(e.skyward_circulating_supply(), sale_amount / 4);
@@ -2098,39 +1906,27 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
     );
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward.user_account.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: (sale_amount / 4 * 3).into(),
                 distributed: (sale_amount / 4).into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("3").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("1").into(),
             total_shares: to_yocto("4").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: (sale.duration.0 * 3 / 4).into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![(sale_amount / 4 * 99 / 100).into()],
                 spent_in_balance: to_yocto("1").into(),
                 remaining_in_balance: to_yocto("3").into(),
                 unclaimed_out_balances: vec![0.into()],
                 shares: to_yocto("4").into(),
+                referral_id: None,
             }),
-        }
+        },
     );
 
     assert_eq!(
@@ -2141,39 +1937,27 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
     e.near.borrow_runtime_mut().cur_block.block_timestamp = sale.start_time.0 + sale.duration.0 / 2;
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward.user_account.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: (sale_amount / 2).into(),
                 distributed: (sale_amount / 2).into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("2").into(),
             in_token_paid_unclaimed: to_yocto("1").into(),
             in_token_paid: to_yocto("2").into(),
             total_shares: to_yocto("4").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: (sale.duration.0 / 2).into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![(sale_amount / 4 * 99 / 100).into()],
                 spent_in_balance: to_yocto("2").into(),
                 remaining_in_balance: to_yocto("2").into(),
                 unclaimed_out_balances: vec![(sale_amount / 4).into()],
                 shares: to_yocto("4").into(),
+                referral_id: None,
             }),
-        }
+        },
     );
 
     assert_eq!(
@@ -2192,39 +1976,27 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
         .assert_success();
 
     let alice_sale = e.get_sale(0, Some(alice.valid_account_id()));
-    assert_eq!(
-        alice_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward.user_account.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &alice_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: (sale_amount / 2).into(),
                 distributed: (sale_amount / 2).into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("5").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("2").into(),
             total_shares: to_yocto("10").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: (sale.duration.0 / 2).into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![to_yocto("0").into()],
                 spent_in_balance: to_yocto("0").into(),
                 remaining_in_balance: to_yocto("3").into(),
                 unclaimed_out_balances: vec![0.into()],
                 shares: to_yocto("6").into(),
+                referral_id: None,
             }),
-        }
+        },
     );
 
     assert_eq!(
@@ -2254,39 +2026,27 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
         sale.start_time.0 + sale.duration.0 * 3 / 4;
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward.user_account.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: (sale_amount / 4).into(),
                 distributed: (sale_amount * 3 / 4).into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("2.5").into(),
             in_token_paid_unclaimed: to_yocto("2.5").into(),
             in_token_paid: to_yocto("4.5").into(),
             total_shares: to_yocto("10").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: (sale.duration.0 / 4).into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![(sale_amount / 4 * 99 / 100).into()],
                 spent_in_balance: to_yocto("3").into(),
                 remaining_in_balance: to_yocto("1").into(),
                 unclaimed_out_balances: vec![(sale_amount * 7 / 20).into()],
                 shares: to_yocto("4").into(),
+                referral_id: None,
             }),
-        }
+        },
     );
 
     bob.function_call(
@@ -2299,40 +2059,29 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
     .assert_success();
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward.user_account.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: (sale_amount / 4).into(),
                 distributed: (sale_amount * 3 / 4).into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("2.0").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("4.5").into(),
             total_shares: to_yocto("8").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: (sale.duration.0 / 4).into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![(sale_amount * 3 / 5 * 99 / 100).into()],
                 spent_in_balance: to_yocto("3").into(),
                 remaining_in_balance: to_yocto("0.5").into(),
                 unclaimed_out_balances: vec![0.into()],
                 shares: to_yocto("2").into(),
+                referral_id: None,
             }),
-        }
+        },
     );
+
     assert_eq!(
         e.balances_of(bob),
         vec![
@@ -2347,39 +2096,27 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
     e.near.borrow_runtime_mut().cur_block.block_timestamp = sale.start_time.0 + sale.duration.0;
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward.user_account.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: sale_amount.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("2").into(),
             in_token_paid: to_yocto("6.5").into(),
             total_shares: to_yocto("8").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![(sale_amount * 3 / 5 * 99 / 100).into()],
                 spent_in_balance: to_yocto("3.5").into(),
                 remaining_in_balance: to_yocto("0").into(),
                 unclaimed_out_balances: vec![(sale_amount * 1 / 16).into()],
                 shares: to_yocto("2").into(),
+                referral_id: None,
             }),
-        }
+        },
     );
 
     let alice_sale = e.get_sale(0, Some(alice.valid_account_id()));
@@ -2391,6 +2128,7 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
             remaining_in_balance: to_yocto("0").into(),
             unclaimed_out_balances: vec![(sale_amount * 27 / 80).into()],
             shares: to_yocto("6").into(),
+            referral_id: None
         })
     );
 
@@ -2441,72 +2179,47 @@ fn test_skyward_sale_alice_joins_in_the_middle() {
     assert_eq!(alice_sale.subscription, None);
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward.user_account.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: sale_amount.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("6.5").into(),
             total_shares: to_yocto("2").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: Some(SubscriptionOutput {
                 claimed_out_balance: vec![(sale_amount * 3 / 5 * 99 / 100).into()],
                 spent_in_balance: to_yocto("3.5").into(),
                 remaining_in_balance: to_yocto("0").into(),
                 unclaimed_out_balances: vec![(sale_amount * 1 / 16).into()],
                 shares: to_yocto("2").into(),
+                referral_id: None,
             }),
-        }
+        },
     );
 
     bob.function_call(e.skyward.contract.sale_claim_out_tokens(0), BASE_GAS, 0)
         .assert_success();
 
     let bobs_sale = e.get_sale(0, Some(bob.valid_account_id()));
-    assert_eq!(
-        bobs_sale,
-        SaleOutput {
-            title: TITLE.to_string(),
-            url: None,
-            permissions_contract_id: None,
-
-            sale_id: 0,
-            owner_id: e.skyward.user_account.account_id.clone(),
-            out_tokens: vec![SaleOutputOutToken {
-                referral_bpt: Some(100),
-                token_account_id: e.skyward_token.account_id.clone(),
+    e.assert_sale_eq(
+        &bobs_sale,
+        PartialSale {
+            out_tokens: vec![PartialOutToken {
                 remaining: 0.into(),
                 distributed: sale_amount.into(),
                 treasury_unclaimed: None,
             }],
-            in_token_account_id: e.w_near.account_id.clone(),
             in_token_remaining: to_yocto("0").into(),
             in_token_paid_unclaimed: to_yocto("0").into(),
             in_token_paid: to_yocto("6.5").into(),
             total_shares: to_yocto("0").into(),
-            start_time: sale.start_time.clone(),
-            duration: sale.duration.clone(),
-            remaining_duration: 0.into(),
-
             subscription: None,
-        }
+        },
     );
 
     assert_eq!(

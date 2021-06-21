@@ -32,7 +32,7 @@ impl From<VSubscription> for Subscription {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq, Clone))]
 pub struct SubscriptionOutput {
     pub remaining_in_balance: WrappedBalance,
     pub spent_in_balance: WrappedBalance,
