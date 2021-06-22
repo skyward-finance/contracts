@@ -2,8 +2,8 @@
 set -e
 pushd "$(dirname $0)"
 
-cargo run -- example.csv example_out.borsh 1000000000000000
-mkdir -p "../lockup/data"
-cp example_out.borsh ../lockup/data/accounts.borsh
+mkdir -p ./data
+cp ./example.csv ./data/lockup.csv
+./run.sh
 
 popd

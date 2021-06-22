@@ -24,6 +24,7 @@ const GAS_FOR_FT_TRANSFER: Gas = 10_000_000_000_000;
 const GAS_FOR_FT_TRANSFER_CALL: Gas = 50_000_000_000_000;
 const LOCKUP_DATA: &[u8] = include_bytes!("../data/accounts.borsh");
 const SIZE_OF_FIXED_SIZE_ACCOUNT: usize = 60;
+const BALANCE_OFFSET: usize = 44;
 const NUM_LOCKUP_ACCOUNTS: usize = LOCKUP_DATA.len() / SIZE_OF_FIXED_SIZE_ACCOUNT;
 
 const MAX_STORAGE_PER_ACCOUNT: u64 = 121;
@@ -288,12 +289,20 @@ fn get_fixed_size_account(index: usize) -> FixedSizeAccount {
     .unwrap()
 }
 
+fn get_fixed_size_account_balance(index: usize) -> Balance {
+    Balance::try_from_slice(
+        &LOCKUP_DATA[(index * SIZE_OF_FIXED_SIZE_ACCOUNT + BALANCE_OFFSET)
+            ..((index + 1) * SIZE_OF_FIXED_SIZE_ACCOUNT)],
+    )
+    .unwrap()
+}
+
 fn to_nano(timestamp: TimestampSec) -> Timestamp {
     Timestamp::from(timestamp) * 10u64.pow(9)
 }
 
 fn compute_total_balance() -> Balance {
     (0..NUM_LOCKUP_ACCOUNTS)
-        .map(|index| get_fixed_size_account(index).balance)
+        .map(|index| get_fixed_size_account_balance(index))
         .sum()
 }

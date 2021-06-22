@@ -42,13 +42,17 @@ fn hash_account(account_id: &AccountId) -> CryptoHash {
     res
 }
 
+const MAX_PER_FILE: usize = 10000;
+
 pub fn main() {
     let file_path = env::args_os()
         .nth(1)
         .expect("Missing input csv file name argument");
     let output_file_path = env::args_os()
         .nth(2)
-        .expect("Missing output borsh file name argument");
+        .expect("Missing output borsh file name argument")
+        .into_string()
+        .unwrap();
     let balance_multiplier: u128 = env::args_os()
         .nth(3)
         .map(|s| {
@@ -66,7 +70,6 @@ pub fn main() {
     let mut rdr = csv::Reader::from_reader(file);
     let mut total_accounts: usize = 0;
     let mut total_balance: u128 = 0;
-    let mut data = vec![];
     let mut min_start_timestamp = u32::MAX;
     let mut max_end_timestamp = 0;
     let mut accounts = BTreeMap::new();
@@ -109,9 +112,6 @@ pub fn main() {
         };
         assert!(accounts.insert(account_hash, account).is_none());
     }
-    for account in accounts.values() {
-        data.extend(account.try_to_vec().unwrap());
-    }
     println!("Total number of accounts {}\nTotal balance: {}\nTotal multiplied balance: {}\nMinimum start timestamp: {}\nMaximum end timestamp: {}",
         total_accounts,
         total_balance / balance_multiplier,
@@ -119,6 +119,20 @@ pub fn main() {
         min_start_timestamp,
         max_end_timestamp,
     );
-    let mut file = File::create(output_file_path).expect("Failed to create the output file");
-    file.write_all(&data).expect("Failed to write data");
+
+    let mut index = 0;
+    let values: Vec<_> = accounts.values().collect();
+    for chunk in values.chunks(MAX_PER_FILE) {
+        let output_file = format!("{}{}.borsh", output_file_path, index);
+        let mut total_balance = 0;
+        let mut data = vec![];
+        for account in chunk {
+            total_balance += account.balance;
+            data.extend(account.try_to_vec().unwrap());
+        }
+        println!("File {}: balance {}", output_file, total_balance);
+        let mut file = File::create(output_file).expect("Failed to create the output file");
+        file.write_all(&data).expect("Failed to write data");
+        index += 1;
+    }
 }
