@@ -4,8 +4,8 @@ use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{ValidAccountId, WrappedBalance};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
-    env, log, near_bindgen, AccountId, Balance, BorshStorageKey, CryptoHash, Gas, PanicOnDefault,
-    Promise, Timestamp,
+    env, ext_contract, is_promise_success, log, near_bindgen, AccountId, Balance, BorshStorageKey,
+    CryptoHash, Gas, PanicOnDefault, Promise, PromiseOrValue, Timestamp,
 };
 use std::cmp::Ordering;
 
@@ -21,6 +21,7 @@ pub type TokenAccountId = AccountId;
 
 const CRYPTO_HASH_SIZE: usize = 32;
 const GAS_FOR_FT_TRANSFER: Gas = 10_000_000_000_000;
+const GAS_FOR_AFTER_FT_TRANSFER: Gas = 10_000_000_000_000;
 const GAS_FOR_FT_TRANSFER_CALL: Gas = 50_000_000_000_000;
 const LOCKUP_DATA: &[u8] = include_bytes!("../data/accounts.borsh");
 const SIZE_OF_FIXED_SIZE_ACCOUNT: usize = 60;
@@ -31,9 +32,19 @@ const MAX_STORAGE_PER_ACCOUNT: u64 = 121;
 const SELF_STORAGE: u64 = 1000;
 
 const ONE_YOCTO: Balance = 1;
+const NO_DEPOSIT: Balance = 0;
 
 uint::construct_uint! {
     pub struct U256(4);
+}
+
+#[ext_contract(ext_self)]
+trait SelfCallbacks {
+    fn after_ft_transfer(&mut self, account_id: AccountId, amount: WrappedBalance) -> bool;
+}
+
+trait SelfCallbacks {
+    fn after_ft_transfer(&mut self, account_id: AccountId, amount: WrappedBalance) -> bool;
 }
 
 #[derive(BorshDeserialize)]
@@ -134,7 +145,7 @@ impl Contract {
             })
     }
 
-    pub fn claim(&mut self) {
+    pub fn claim(&mut self) -> PromiseOrValue<bool> {
         let account_id = env::predecessor_account_id();
         let (
             mut account,
@@ -168,7 +179,7 @@ impl Contract {
         }
         if claim_balance > 0 {
             ext_fungible_token::ft_transfer(
-                account_id,
+                account_id.clone(),
                 claim_balance.into(),
                 Some(format!(
                     "Claiming unlocked {} balance from {}",
@@ -179,7 +190,16 @@ impl Contract {
                 ONE_YOCTO,
                 GAS_FOR_FT_TRANSFER,
             )
-            .as_return();
+            .then(ext_self::after_ft_transfer(
+                account_id,
+                claim_balance.into(),
+                &env::current_account_id(),
+                NO_DEPOSIT,
+                GAS_FOR_AFTER_FT_TRANSFER,
+            ))
+            .into()
+        } else {
+            PromiseOrValue::Value(true)
         }
     }
 
@@ -245,6 +265,24 @@ impl Contract {
                 }
                 None
             })
+    }
+}
+
+#[near_bindgen]
+impl SelfCallbacks for Contract {
+    #[private]
+    fn after_ft_transfer(&mut self, account_id: AccountId, amount: WrappedBalance) -> bool {
+        let promise_success = is_promise_success();
+        if !promise_success {
+            let mut account = self
+                .accounts
+                .get(&account_id)
+                .expect("The claim is not found");
+            account.claimed_balance -= amount.0;
+            self.total_claimed -= amount.0;
+            self.accounts.insert(&account_id, &account);
+        }
+        promise_success
     }
 }
 

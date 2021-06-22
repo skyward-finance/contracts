@@ -37,7 +37,7 @@ const WRAP_NEAR_ID: &str = "wrap_near.skyward.near";
 const SKYWARD_DAO_ID: &str = "skyward-dao.near";
 
 const BASE_GAS: Gas = 10_000_000_000_000;
-const CLAIM_GAS: Gas = 20_000_000_000_000;
+const CLAIM_GAS: Gas = 60_000_000_000_000;
 const DONATE_GAS: Gas = 80_000_000_000_000;
 const SKYWARD_TOKEN_DECIMALS: u8 = 18;
 const SKYWARD_TOKEN_BASE: Balance = 10u128.pow(SKYWARD_TOKEN_DECIMALS as u32);
@@ -368,6 +368,78 @@ fn test_claim() {
     );
     assert_eq!(e.get_stats().total_claimed.0, TOTAL_LOCKUP_BALANCE);
     assert_eq!(e.get_skyward_token_balance(&e.users[1]), BALANCE_2);
+}
+
+#[test]
+fn test_claim_unregistered() {
+    let e = Env::init(0);
+    e.root.borrow_runtime_mut().genesis.block_prod_time = 0;
+    e.root.borrow_runtime_mut().cur_block.block_timestamp = to_nano(TIMESTAMP_1 - 100);
+
+    let user = e.near.create_user(accounts(0).into(), to_yocto("100"));
+
+    assert_eq!(e.get_skyward_token_balance(&user), 0);
+    assert_eq!(
+        e.get_stats(),
+        Stats {
+            token_account_id: SKYWARD_TOKEN_ID.to_string(),
+            skyward_account_id: SKYWARD_ID.to_string(),
+            claim_expiration_timestamp: CLAIM_EXPIRATION_TIMESTAMP,
+            total_balance: U128(TOTAL_LOCKUP_BALANCE),
+            untouched_balance: U128(TOTAL_LOCKUP_BALANCE),
+            total_claimed: U128(0)
+        }
+    );
+    let res: bool = e.claim(&user).unwrap_json();
+    assert!(res);
+    assert_eq!(e.get_skyward_token_balance(&user), 0);
+    assert_eq!(e.get_account(&user).unwrap().claimed_balance.0, 0);
+    assert_eq!(
+        e.get_stats(),
+        Stats {
+            token_account_id: SKYWARD_TOKEN_ID.to_string(),
+            skyward_account_id: SKYWARD_ID.to_string(),
+            claim_expiration_timestamp: CLAIM_EXPIRATION_TIMESTAMP,
+            total_balance: U128(TOTAL_LOCKUP_BALANCE),
+            untouched_balance: U128(TOTAL_LOCKUP_BALANCE - BALANCE_1),
+            total_claimed: U128(0)
+        }
+    );
+
+    e.root.borrow_runtime_mut().cur_block.block_timestamp =
+        to_nano((TIMESTAMP_2 - TIMESTAMP_1) / 2 + TIMESTAMP_1);
+
+    // Not registered for storage on token
+    let res: bool = e.claim(&user).unwrap_json();
+    assert!(!res);
+
+    assert_eq!(e.get_skyward_token_balance(&user), 0);
+    assert_eq!(e.get_account(&user).unwrap().claimed_balance.0, 0);
+
+    assert_eq!(
+        e.get_stats(),
+        Stats {
+            token_account_id: SKYWARD_TOKEN_ID.to_string(),
+            skyward_account_id: SKYWARD_ID.to_string(),
+            claim_expiration_timestamp: CLAIM_EXPIRATION_TIMESTAMP,
+            total_balance: U128(TOTAL_LOCKUP_BALANCE),
+            untouched_balance: U128(TOTAL_LOCKUP_BALANCE - BALANCE_1),
+            total_claimed: U128(0)
+        }
+    );
+
+    // Registering for storage
+    storage_deposit(&user, SKYWARD_TOKEN_ID, &user.account_id);
+
+    let res: bool = e.claim(&user).unwrap_json();
+    assert!(res);
+
+    assert_eq!(
+        e.get_account(&user).unwrap().claimed_balance.0,
+        BALANCE_1 / 2
+    );
+    assert_eq!(e.get_stats().total_claimed.0, BALANCE_1 / 2);
+    assert_eq!(e.get_skyward_token_balance(&user), BALANCE_1 / 2);
 }
 
 #[test]
