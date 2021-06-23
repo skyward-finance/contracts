@@ -7,7 +7,7 @@ cd "$(dirname $0)"
 ACCOUNT_ID=$1
 SKYWARD_TOKEN_ID=token.$ACCOUNT_ID
 CONTRACT_ID=$ACCOUNT_ID
-WRAP_NEAR_TOKEN_ID=wrap.testnet
+WRAP_NEAR_TOKEN_ID=wrap.near
 
 START_TIME=1625097600
 near call $CONTRACT_ID --accountId=$CONTRACT_ID sale_create '{"sale": {
