@@ -41,10 +41,12 @@ uint::construct_uint! {
 #[ext_contract(ext_self)]
 trait SelfCallbacks {
     fn after_ft_transfer(&mut self, account_id: AccountId, amount: WrappedBalance) -> bool;
+    fn after_donation(&mut self, amount: WrappedBalance);
 }
 
 trait SelfCallbacks {
     fn after_ft_transfer(&mut self, account_id: AccountId, amount: WrappedBalance) -> bool;
+    fn after_donation(&mut self, amount: WrappedBalance);
 }
 
 #[derive(BorshDeserialize)]
@@ -234,7 +236,12 @@ impl Contract {
                 &self.token_account_id,
                 ONE_YOCTO,
                 GAS_FOR_FT_TRANSFER_CALL,
-            );
+            ).then(ext_self::after_donation(
+                self.untouched_balance.into(),
+                &env::current_account_id(),
+                NO_DEPOSIT,
+                GAS_FOR_AFTER_FT_TRANSFER,
+            ));
             self.total_balance -= self.untouched_balance;
             self.untouched_balance = 0;
         }
@@ -283,6 +290,16 @@ impl SelfCallbacks for Contract {
             self.accounts.insert(&account_id, &account);
         }
         promise_success
+    }
+
+    #[private]
+    fn after_donation(&mut self, amount: WrappedBalance) {
+        if !is_promise_success() {
+            let amount: Balance = amount.into();
+            self.total_balance += amount;
+            self.untouched_balance = amount;
+            log!("Donating failed, counting {} back to untouched", amount);
+        }
     }
 }
 
